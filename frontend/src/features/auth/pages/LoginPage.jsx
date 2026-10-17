@@ -6,6 +6,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { AuthHeading, AuthSeparator } from "../../../components/ui/AuthPage.jsx";
 import { Button } from "../../../components/ui/Button.jsx";
 import { Input } from "../../../components/ui/Input.jsx";
+import { PasswordInput } from "../../../components/ui/PasswordInput.jsx";
 import { getApiErrorMessage } from "../../../services/apiError.js";
 import { getHomeRoute } from "../../../lib/roles.js";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -42,13 +43,12 @@ export function LoginPage() {
           type="email"
           {...form.register("email")}
         />
-        <Input
+        <PasswordInput
           autoComplete="current-password"
           error={errors.password?.message}
           icon={LockKeyhole}
           label="Password"
           placeholder="Your password"
-          type="password"
           {...form.register("password")}
         />
         <div className="text-right">
