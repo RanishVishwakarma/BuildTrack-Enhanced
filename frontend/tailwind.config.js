@@ -60,7 +60,9 @@ export default {
       },
       animation: {
         marquee: "marquee 40s linear infinite",
-        "page-in": "page-in 280ms ease-out both",
+        // "backwards" (not "both"): no transform remains after the fade-in, so fixed
+        // children are never positioned relative to the page wrapper.
+        "page-in": "page-in 280ms ease-out backwards",
       },
       boxShadow: {
         sm: "var(--shadow-sm)",

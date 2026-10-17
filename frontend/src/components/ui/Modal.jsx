@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect, useId } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "../../lib/utils.js";
 
 export function Modal({ open, title, description, onClose, children, footer, size = "md" }) {
@@ -11,12 +12,20 @@ export function Modal({ open, title, description, onClose, children, footer, siz
       if (event.key === "Escape") onClose?.();
     };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    // Keep the page behind the dialog from scrolling while it is open.
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [open, onClose]);
 
   if (!open) return null;
   const widths = { sm: "max-w-md", md: "max-w-2xl", lg: "max-w-4xl" };
-  return (
+  // Rendered into <body> so no transformed or overflow-clipped ancestor (such
+  // as the page fade-in wrapper) can trap the fixed overlay inside the page.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
       <button aria-label="Close dialog" className="absolute inset-0 bg-black/50" onClick={onClose} type="button" />
       <div
@@ -37,6 +46,7 @@ export function Modal({ open, title, description, onClose, children, footer, siz
         <div className="overflow-y-auto px-5 py-4">{children}</div>
         {footer ? <div className="flex flex-wrap justify-end gap-2 border-t border-border px-5 py-3">{footer}</div> : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
