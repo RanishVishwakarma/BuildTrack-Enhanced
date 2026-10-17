@@ -11,6 +11,8 @@ import { Modal } from "../../../components/ui/Modal.jsx";
 import { Select } from "../../../components/ui/Select.jsx";
 import { Textarea } from "../../../components/ui/Textarea.jsx";
 import { confirmAction, useAction } from "../../../hooks/useAction.js";
+import { useAsyncData } from "../../../hooks/useAsyncData.js";
+import { describeSupply } from "../../../lib/gst.js";
 import { can } from "../../../lib/roles.js";
 import { dateInputToIso, formatCurrency, formatDate, formatDateTime, getId, toDateInput } from "../../../lib/utils.js";
 import { getApiErrorMessage } from "../../../services/apiError.js";
@@ -22,10 +24,14 @@ import {
   createInvoice,
   deleteInvoice,
   downloadInvoicePdf,
+  getInvoiceMatch,
+  getInvoicePreview,
   getInvoices,
   invoiceAction,
   uploadInvoiceAttachment,
 } from "../services/procurementService.js";
+import { InvoicePosition } from "./InvoicePosition.jsx";
+import { invoiceWarnings, useInvoicePosition } from "../hooks/useInvoicePosition.js";
 import { ListSection, RowActions } from "./ListSection.jsx";
 import { PaymentFormModal } from "./PaymentsTab.jsx";
 
@@ -48,16 +54,11 @@ function InvoiceFormModal({ open, onClose, onSaved }) {
     values: open ? { purchase_order_id: "", invoice_number: "", amount: 0, gst: 0, invoice_date: toDateInput() } : undefined,
   });
   const errors = form.formState.errors;
-  const po = lookups.getPurchaseOrder(form.watch("purchase_order_id"));
-
-  // Prefill from the PO's own subtotal and GST; nothing is estimated.
-  function onPoChange(event) {
-    const selected = lookups.getPurchaseOrder(event.target.value);
-    if (!selected) return;
-    form.setValue("amount", selected.subtotal ?? selected.total_cost ?? 0);
-    form.setValue("gst", selected.gst ?? 0);
-    if (!form.getValues("invoice_number")) form.setValue("invoice_number", `INV-${selected.po_number || ""}`);
-  }
+  const poId = form.watch("purchase_order_id");
+  const po = lookups.getPurchaseOrder(poId);
+  // Amount and GST are prefilled from what the site accepted, not the PO.
+  const position = useInvoicePosition(getInvoicePreview, poId, form);
+  const warnings = invoiceWarnings(position.data, form.watch("amount"), form.watch("gst"));
 
   async function onFile(event) {
     const file = event.target.files?.[0];
@@ -80,7 +81,7 @@ function InvoiceFormModal({ open, onClose, onSaved }) {
       invoice_date: dateInputToIso(values.invoice_date),
       attachment_url: attachment.url || undefined,
     };
-    const result = await run("save", () => createInvoice(payload), { success: "Invoice created.", error: "Unable to create invoice." });
+    const result = await run("save", () => createInvoice(payload), { success: "Invoice recorded.", error: "Unable to record invoice." });
     if (result) {
       setAttachment({ url: "", uploading: false });
       onSaved();
@@ -92,16 +93,19 @@ function InvoiceFormModal({ open, onClose, onSaved }) {
       footer={
         <>
           <Button disabled={Boolean(pending)} onClick={onClose} variant="secondary">Cancel</Button>
-          <Button disabled={Boolean(pending) || attachment.uploading} form="invoice-form" type="submit">{pending ? "Saving..." : "Create invoice"}</Button>
+          <Button disabled={Boolean(pending) || attachment.uploading || warnings.some((w) => w.blocking)} form="invoice-form" type="submit">{pending ? "Saving..." : "Record invoice"}</Button>
         </>
       }
       onClose={onClose}
       open={open}
-      title="New invoice"
+      title="Record vendor invoice"
     >
       <form className="grid gap-4 sm:grid-cols-2" id="invoice-form" noValidate onSubmit={submit}>
+        <p className="text-sm text-muted sm:col-span-2">
+          Enter the bill the vendor sent you. Vendors with a portal login can submit it themselves.
+        </p>
         <div className="sm:col-span-2">
-          <Select label="Purchase order" {...form.register("purchase_order_id", { onChange: onPoChange })} error={errors.purchase_order_id?.message}>
+          <Select label="Purchase order" {...form.register("purchase_order_id")} error={errors.purchase_order_id?.message}>
             <option value="">Select purchase order</option>
             {lookups.purchaseOrders.map((item) => (
               <option key={getId(item)} value={getId(item)}>{item.po_number} · {item.materials} · {formatCurrency(item.total_cost)}</option>
@@ -109,12 +113,13 @@ function InvoiceFormModal({ open, onClose, onSaved }) {
           </Select>
           {po ? <p className="mt-1 text-sm text-muted">Vendor: {lookups.vendorName(po.vendor_id, po)}</p> : null}
         </div>
-        <Input label="Invoice number" {...form.register("invoice_number")} error={errors.invoice_number?.message} />
+        <InvoicePosition loading={position.loading} position={position.data} warnings={warnings} />
+        <Input label="Vendor invoice number" placeholder="As printed on the bill" {...form.register("invoice_number")} error={errors.invoice_number?.message} />
         <Input label="Invoice date" type="date" {...form.register("invoice_date")} error={errors.invoice_date?.message} />
         <Input label="Amount before GST (Rs)" min="0" step="any" type="number" {...form.register("amount")} error={errors.amount?.message} />
         <Input label="GST (Rs)" min="0" step="any" type="number" {...form.register("gst")} error={errors.gst?.message} />
         <label className="block sm:col-span-2">
-          <span className="mb-1 block text-sm font-medium text-foreground">Attachment (optional)</span>
+          <span className="mb-1 block text-sm font-medium text-foreground">Copy of the bill (optional)</span>
           <input className="block w-full text-sm" onChange={onFile} type="file" />
           {attachment.uploading ? <span className="mt-1 block text-sm text-muted">Uploading...</span> : null}
           {attachment.url ? <span className="mt-1 block text-sm text-success">Uploaded: {attachment.url}</span> : null}
@@ -129,9 +134,16 @@ function InvoiceActionModal({ state, onClose, onSaved }) {
   const [comments, setComments] = useState("");
   const { run, pending } = useAction();
   const invoice = state?.invoice;
+  const match = useAsyncData(() => getInvoiceMatch(getId(invoice)), [getId(invoice)], { enabled: Boolean(invoice) });
+  const flags = match.data?.flags || [];
+  const needsReason = action !== "reject" && flags.length > 0;
 
   async function submit(event) {
     event.preventDefault();
+    if (needsReason && !comments.trim()) {
+      toast.error("Explain in the comments why this invoice is accepted despite the differences.");
+      return;
+    }
     const result = await run("action", () => invoiceAction(getId(invoice), action, { comments: comments || undefined }), {
       success: `Invoice ${invoice.invoice_number} ${action === "verify" ? "verified" : action === "approve" ? "approved" : "rejected"}.`,
       error: "Unable to update invoice.",
@@ -149,16 +161,59 @@ function InvoiceActionModal({ state, onClose, onSaved }) {
       }
       onClose={onClose}
       open={Boolean(invoice)}
-      size="sm"
       title={`Review invoice ${invoice?.invoice_number || ""}`}
     >
       <form className="space-y-4" id="invoice-action-form" onSubmit={submit}>
+        {match.loading ? <p className="text-sm text-muted">Checking order and deliveries...</p> : null}
+        {match.data && !match.data.missing_po ? (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-muted">
+                <th className="py-1 font-medium" scope="col"></th>
+                <th className="py-1 text-right font-medium" scope="col">Order</th>
+                <th className="py-1 text-right font-medium" scope="col">Received</th>
+                <th className="py-1 text-right font-medium" scope="col">This invoice</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th className="py-1 text-left font-medium" scope="row">Amount</th>
+                <td className="text-right">{formatCurrency(match.data.po_subtotal)}</td>
+                <td className="text-right">{formatCurrency(match.data.delivered_value)}</td>
+                <td className="text-right font-semibold">{formatCurrency(match.data.amount)}</td>
+              </tr>
+              <tr>
+                <th className="py-1 text-left font-medium" scope="row">GST</th>
+                <td className="text-right">{match.data.gst_rate != null ? `${match.data.gst_rate}%` : "Not set"}</td>
+                <td className="text-right">{match.data.expected_gst != null ? formatCurrency(match.data.expected_gst) : ""}</td>
+                <td className="text-right font-semibold">{formatCurrency(match.data.gst)}</td>
+              </tr>
+              <tr>
+                <th className="py-1 text-left font-medium" scope="row">Other invoices</th>
+                <td className="text-right" colSpan={3}>{formatCurrency(match.data.previously_invoiced)}</td>
+              </tr>
+            </tbody>
+          </table>
+        ) : null}
+        {match.data ? (
+          flags.length ? (
+            <ul className="space-y-1 rounded-md border border-warning p-3 text-sm text-warning">
+              {flags.map((flag) => <li key={flag}>{flag}</li>)}
+            </ul>
+          ) : (
+            <p className="text-sm text-success">Matches the order and accepted deliveries.</p>
+          )
+        ) : null}
         <Select label="Action" value={action} onChange={(event) => setAction(event.target.value)}>
           <option value="verify">Verify</option>
           <option value="approve">Approve</option>
           <option value="reject">Reject</option>
         </Select>
-        <Textarea label="Comments" value={comments} onChange={(event) => setComments(event.target.value)} />
+        <Textarea
+          label={needsReason ? "Reason for accepting despite the differences" : "Comments"}
+          value={comments}
+          onChange={(event) => setComments(event.target.value)}
+        />
       </form>
     </Modal>
   );
@@ -216,9 +271,9 @@ export function InvoicesTab() {
   return (
     <>
       <ListSection
-        addLabel="New invoice"
+        addLabel="Record invoice"
         columns={columns}
-        emptyDescription="Invoices are raised against purchase orders by vendors or finance."
+        emptyDescription="Vendors submit invoices from their portal, or you record the bills they send."
         emptyTitle="No invoices"
         exportName="invoices"
         getRowId={getId}
@@ -238,7 +293,13 @@ export function InvoicesTab() {
               ["Vendor", lookups.vendorName(details.vendor_id, details)],
               ["Purchase order", lookups.poNumber(details.purchase_order_id, details)],
               ["Amount", formatCurrency(details.amount)],
-              ["GST", formatCurrency(details.gst)],
+              ["GST", details.gst_rate != null ? `${formatCurrency(details.gst)} (${details.gst_rate}%)` : formatCurrency(details.gst)],
+              ...(details.supply_type === "intra_state"
+                ? [["CGST + SGST", `${formatCurrency(details.cgst)} + ${formatCurrency(details.sgst)}`]]
+                : details.supply_type === "inter_state"
+                  ? [["IGST", formatCurrency(details.igst)]]
+                  : []),
+              ["Tax type", describeSupply(details.supply_type)],
               ["Total", formatCurrency(Number(details.amount || 0) + Number(details.gst || 0))],
               ["Invoice date", formatDate(details.invoice_date)],
               ["Status", <StatusBadge key="s" status={details.status} />],

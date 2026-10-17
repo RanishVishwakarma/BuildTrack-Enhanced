@@ -13,6 +13,7 @@ from reportlab.pdfgen import canvas
 from app.core.config import BASE_DIR
 from app.core.audit import record_audit
 from app.modules.procurement.gst import GSTError, config as gst_settings
+from app.modules.procurement.invoice_match import match_invoice, over_po_message
 from app.core.permissions import ensure_permission, has_permission
 from app.core.security import get_current_user, hash_password
 from app.db.mongodb import get_database
@@ -1027,6 +1028,7 @@ async def vendor_create_invoice(
     inv_data["vendor_id"] = str(vendor_id)
     inv_data["status"] = "pending"
     inv_data["payment_status"] = "pending"
+    inv_data.update(await checked_invoice_tax(db, po, invoice.amount, invoice.gst))
 
     doc = await create_doc(db, "invoices", inv_data, current_user)
 
@@ -1426,8 +1428,77 @@ async def inventory(params=Depends(list_params), current_user=Depends(get_curren
 
 @router.post("/invoices", response_model=Invoice)
 async def create_invoice(invoice: InvoiceCreate, current_user=Depends(get_current_user), db=Depends(get_database)):
+    """Record a vendor's invoice received outside the portal (paper or email)."""
     ensure_permission(current_user, "procurement.invoice.manage", "procurement.request.review")
-    return Invoice(**serialize_doc(await create_doc(db, "invoices", invoice.model_dump(), current_user)))
+    po = await get_doc(db, "purchase_orders", invoice.purchase_order_id)
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    data = invoice.model_dump()
+    # The vendor is the order's vendor, whatever the client sent.
+    data["vendor_id"] = str(po.get("vendor_id") or "")
+    if await db.invoices.find_one({"invoice_number": data["invoice_number"], "vendor_id": data["vendor_id"]}):
+        raise HTTPException(status_code=400, detail="This vendor already has an invoice with this number")
+    data.update(await checked_invoice_tax(db, po, invoice.amount, invoice.gst))
+    return Invoice(**serialize_doc(await create_doc(db, "invoices", data, current_user)))
+
+
+async def invoice_position(db, po: dict, **kwargs) -> dict:
+    vendor = await get_doc(db, "vendors", str(po.get("vendor_id") or "")) if po.get("vendor_id") else None
+    return await match_invoice(db, po, vendor_gstin=(vendor or {}).get("gst_number"), **kwargs)
+
+
+def split_gst(gst: float, supply_type: str) -> dict:
+    """CGST/SGST/IGST of the invoice's own GST amount."""
+    gst = round(float(gst or 0), 2)
+    if supply_type == "intra_state":
+        cgst = round(gst / 2, 2)
+        return {"cgst": cgst, "sgst": round(gst - cgst, 2), "igst": 0.0}
+    if supply_type == "inter_state":
+        return {"cgst": 0.0, "sgst": 0.0, "igst": gst}
+    return {"cgst": None, "sgst": None, "igst": None}
+
+
+async def checked_invoice_tax(db, po: dict, amount, gst, exclude_invoice_id=None) -> dict:
+    """Refuse invoices beyond the order total; return the GST fields to store."""
+    match = await invoice_position(db, po, amount=amount, gst=gst, exclude_invoice_id=exclude_invoice_id)
+    if match["exceeds_po"]:
+        raise HTTPException(status_code=400, detail=over_po_message(match))
+    return {"gst_rate": match["gst_rate"], "supply_type": match["supply_type"], **split_gst(gst, match["supply_type"])}
+
+
+@router.get("/purchase-orders/{po_id}/invoice-preview")
+async def po_invoice_preview(po_id: str, current_user=Depends(get_current_user), db=Depends(get_database)):
+    """What is still billable on an order, to prefill a new invoice."""
+    ensure_permission(current_user, "procurement.invoice.manage", "procurement.request.review")
+    po = await get_doc(db, "purchase_orders", po_id)
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    return await invoice_position(db, po)
+
+
+@router.get("/vendor/purchase-orders/{po_id}/invoice-preview")
+async def vendor_po_invoice_preview(po_id: str, current_user=Depends(get_current_user), db=Depends(get_database)):
+    vendor_id = await resolve_vendor_id(db, current_user)
+    po = await get_doc(db, "purchase_orders", po_id)
+    if not po or str(po.get("vendor_id") or "") != str(vendor_id):
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    return await invoice_position(db, po)
+
+
+@router.get("/invoices/{invoice_id}/match")
+async def invoice_match(invoice_id: str, current_user=Depends(get_current_user), db=Depends(get_database)):
+    """PO vs accepted deliveries vs this invoice, for verification."""
+    ensure_permission(current_user, "procurement.invoice.manage", "procurement.request.review")
+    invoice = await get_doc(db, "invoices", invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    po = await get_doc(db, "purchase_orders", str(invoice.get("purchase_order_id") or ""))
+    if not po:
+        return {"flags": ["The purchase order for this invoice no longer exists."], "missing_po": True}
+    match = await invoice_position(db, po, amount=invoice.get("amount"), gst=invoice.get("gst"), exclude_invoice_id=invoice_id)
+    if match["exceeds_po"]:
+        match["flags"].insert(0, over_po_message(match))
+    return match
 
 
 @router.post("/invoices/upload")
@@ -1530,7 +1601,15 @@ async def invoice_pdf(invoice_id: str, current_user=Depends(get_current_user), d
 @router.put("/invoices/{invoice_id}", response_model=Invoice)
 async def edit_invoice(invoice_id: str, invoice: InvoiceUpdate, current_user=Depends(get_current_user), db=Depends(get_database)):
     ensure_permission(current_user, "procurement.invoice.manage", "procurement.request.review")
-    doc = await update_doc(db, "invoices", invoice_id, invoice.model_dump(exclude_unset=True), current_user)
+    data = invoice.model_dump(exclude_unset=True)
+    if "amount" in data or "gst" in data:
+        current = await get_doc(db, "invoices", invoice_id)
+        po = await get_doc(db, "purchase_orders", str((current or {}).get("purchase_order_id") or "")) if current else None
+        if po:
+            data.update(await checked_invoice_tax(
+                db, po, data.get("amount", current.get("amount")), data.get("gst", current.get("gst")), exclude_invoice_id=invoice_id,
+            ))
+    doc = await update_doc(db, "invoices", invoice_id, data, current_user)
     if not doc:
         raise HTTPException(status_code=404, detail="Invoice not found")
     return Invoice(**serialize_doc(doc))
@@ -1550,6 +1629,13 @@ async def invoice_action(invoice_id: str, action: str, payload: InvoiceAction, c
     if action not in {"verify", "approve", "reject"}:
         raise HTTPException(status_code=400, detail="Action must be verify, approve, or reject")
     status_map = {"verify": "verified", "approve": "approved", "reject": "rejected"}
+    if action in {"verify", "approve"}:
+        match = await invoice_match(invoice_id, current_user, db)
+        if match["flags"] and not (payload.comments or "").strip():
+            raise HTTPException(
+                status_code=409,
+                detail="This invoice does not match the order and deliveries. Add a comment explaining why to continue: " + " ".join(match["flags"]),
+            )
     doc = await update_invoice_status(db, invoice_id, status_map[action], current_user, payload.comments)
     if not doc:
         raise HTTPException(status_code=404, detail="Invoice not found")

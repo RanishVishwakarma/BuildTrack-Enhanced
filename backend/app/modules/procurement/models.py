@@ -342,6 +342,11 @@ class InvoiceAction(BaseModel):
 
 class Invoice(InvoiceBase, MongoModel):
     verification_comments: Optional[str] = None
+    gst_rate: Optional[float] = None
+    cgst: Optional[float] = None
+    sgst: Optional[float] = None
+    igst: Optional[float] = None
+    supply_type: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

@@ -85,6 +85,9 @@ export const deleteInvoice = (id) => send("delete", `${invoices}/${id}`);
 export const invoiceAction = (id, action, payload) => send("patch", `${invoices}/${id}/${action}`, payload);
 export const downloadInvoicePdf = (id) => api.get(`${invoices}/${id}/pdf`, { responseType: "blob" });
 export const quickPayInvoice = (id) => send("post", `${invoices}/${id}/quick-pay`, {});
+// PO vs accepted deliveries vs invoice (backend invoice_match.py).
+export const getInvoicePreview = (poId) => api.get(`${purchaseOrders}/${poId}/invoice-preview`).then((response) => response.data);
+export const getInvoiceMatch = (id) => api.get(`${invoices}/${id}/match`).then((response) => response.data);
 
 export async function uploadInvoiceAttachment(file) {
   const formData = new FormData();
@@ -117,6 +120,7 @@ export const createVendorDelivery = (payload) => send("post", `${base}/vendor/de
 export const updateVendorDelivery = (id, payload) => send("put", `${base}/vendor/deliveries/${id}`, payload);
 export const getVendorInvoices = (params) => list(`${base}/vendor/invoices`, params);
 export const createVendorInvoice = (payload) => send("post", `${base}/vendor/invoices`, payload);
+export const getVendorInvoicePreview = (poId) => api.get(`${base}/vendor/purchase-orders/${poId}/invoice-preview`).then((response) => response.data);
 export async function getVendorProfile() {
   const { data } = await api.get(`${base}/vendor/profile`);
   return data;

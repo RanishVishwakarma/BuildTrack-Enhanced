@@ -22,10 +22,13 @@ import { dateInputToIso, formatCurrency, formatDate, formatDateTime, formatNumbe
 import { getApiErrorMessage } from "../../../services/apiError.js";
 import { downloadBlob } from "../../../services/fileDownload.js";
 import { changePassword } from "../../auth/services/authService.js";
+import { InvoicePosition } from "../components/InvoicePosition.jsx";
+import { invoiceWarnings, useInvoicePosition } from "../hooks/useInvoicePosition.js";
 import { RowActions } from "../components/ListSection.jsx";
 import {
   createVendorDelivery,
   createVendorInvoice,
+  getVendorInvoicePreview,
   downloadInvoicePdf,
   downloadPurchaseOrderPdf,
   getVendorDashboard,
@@ -200,18 +203,14 @@ function SubmitInvoiceModal({ open, purchaseOrders, initialPo, onClose, onSaved 
   const form = useForm({
     resolver: zodResolver(invoiceSchema),
     values: open
-      ? { purchase_order_id: getId(initialPo) || "", invoice_number: initialPo ? `INV-${initialPo.po_number}` : "", invoice_date: toDateInput(), amount: initialPo?.subtotal ?? 0, gst: initialPo?.gst ?? 0 }
+      ? { purchase_order_id: getId(initialPo) || "", invoice_number: "", invoice_date: toDateInput(), amount: 0, gst: 0 }
       : undefined,
   });
   const errors = form.formState.errors;
 
-  function onPoChange(event) {
-    const po = purchaseOrders.find((item) => getId(item) === event.target.value);
-    if (!po) return;
-    form.setValue("amount", po.subtotal ?? 0);
-    form.setValue("gst", po.gst ?? 0);
-    if (!form.getValues("invoice_number")) form.setValue("invoice_number", `INV-${po.po_number}`);
-  }
+  // Bill what the site accepted; the backend refuses more than the order.
+  const position = useInvoicePosition(getVendorInvoicePreview, form.watch("purchase_order_id"), form);
+  const warnings = invoiceWarnings(position.data, form.watch("amount"), form.watch("gst"));
 
   const submit = form.handleSubmit(async (values) => {
     const result = await run(
@@ -240,7 +239,7 @@ function SubmitInvoiceModal({ open, purchaseOrders, initialPo, onClose, onSaved 
       footer={
         <>
           <Button disabled={Boolean(pending)} onClick={onClose} variant="secondary">Cancel</Button>
-          <Button disabled={Boolean(pending)} form="vendor-invoice-form" type="submit">{pending ? "Submitting..." : "Submit invoice"}</Button>
+          <Button disabled={Boolean(pending) || warnings.some((w) => w.blocking)} form="vendor-invoice-form" type="submit">{pending ? "Submitting..." : "Submit invoice"}</Button>
         </>
       }
       onClose={onClose}
@@ -249,12 +248,13 @@ function SubmitInvoiceModal({ open, purchaseOrders, initialPo, onClose, onSaved 
     >
       <form className="grid gap-4 sm:grid-cols-2" id="vendor-invoice-form" noValidate onSubmit={submit}>
         <div className="sm:col-span-2">
-          <Select label="Purchase order" {...form.register("purchase_order_id", { onChange: onPoChange })} error={errors.purchase_order_id?.message}>
+          <Select label="Purchase order" {...form.register("purchase_order_id")} error={errors.purchase_order_id?.message}>
             <option value="">Select purchase order</option>
             {purchaseOrders.map((po) => <option key={getId(po)} value={getId(po)}>{po.po_number} · {formatCurrency(po.total_cost)}</option>)}
           </Select>
         </div>
-        <Input label="Invoice number" {...form.register("invoice_number")} error={errors.invoice_number?.message} />
+        <InvoicePosition loading={position.loading} position={position.data} warnings={warnings} />
+        <Input label="Your invoice number" placeholder="e.g. SC/2026/101" {...form.register("invoice_number")} error={errors.invoice_number?.message} />
         <Input label="Invoice date" type="date" {...form.register("invoice_date")} error={errors.invoice_date?.message} />
         <Input label="Amount before GST (Rs)" min="0" step="any" type="number" {...form.register("amount")} error={errors.amount?.message} />
         <Input label="GST (Rs)" min="0" step="any" type="number" {...form.register("gst")} error={errors.gst?.message} />
