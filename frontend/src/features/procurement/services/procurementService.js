@@ -35,6 +35,8 @@ export const createVendor = (payload) => send("post", vendors, payload);
 export const createVendorWithAccount = (payload) => send("post", `${vendors}/create-account`, payload);
 export const updateVendor = (id, payload) => send("put", `${vendors}/${id}`, payload);
 export const deleteVendor = (id) => send("delete", `${vendors}/${id}`);
+export const createVendorLogin = (id, payload) => send("post", `${vendors}/${id}/login`, payload);
+export const resetVendorPassword = (id, password) => send("put", `${vendors}/${id}/login/password`, { password });
 
 // Material requests
 export const getMaterialRequests = (params) => list(materialRequests, params);

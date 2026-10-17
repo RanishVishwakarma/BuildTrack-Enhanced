@@ -59,6 +59,7 @@ export const can = {
   // a user granted e.g. the payment duty sees those actions whatever their role.
   procurementProjectManager: (user) => hasPermission(user, "procurement.request.review"),
   procurementVendorManage: (user) => hasPermission(user, "procurement.vendor.manage"),
+  vendorLoginManage: (user) => hasPermission(user, "users.create", "procurement.vendor.login.manage"),
   procurementSiteEngineer: (user) => hasPermission(user, "procurement.request.create"),
   procurementStoreManager: (user) => hasPermission(user, "procurement.delivery.receive"),
   procurementInvoiceManage: (user) => hasPermission(user, "procurement.invoice.manage"),

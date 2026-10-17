@@ -14,7 +14,7 @@ from app.core.config import BASE_DIR
 from app.core.audit import record_audit
 from app.modules.procurement.gst import GSTError, config as gst_settings
 from app.core.permissions import ensure_permission, has_permission
-from app.core.security import get_current_user
+from app.core.security import get_current_user, hash_password
 from app.db.mongodb import get_database
 from app.modules.auth.db import create_user as create_auth_user, get_user_by_email
 from app.modules.auth.models import UserCreate
@@ -71,6 +71,8 @@ from app.modules.procurement.models import (
     VendorDeliveryCreate,
     VendorDeliveryUpdate,
     VendorInvoiceCreate,
+    VendorLoginCreate,
+    VendorPasswordReset,
     VendorResponseAction,
     VendorUpdate,
 )
@@ -310,7 +312,7 @@ async def create_vendor_with_account(
     db=Depends(get_database),
 ):
     """
-    Administrator-only endpoint.
+    Admins and holders of procurement.vendor.login.manage (project managers).
 
     Atomically creates:
       1. A Vendor document (company record).
@@ -320,14 +322,14 @@ async def create_vendor_with_account(
     (identical to POST /vendors).
     """
 
-    ensure_permission(current_user, "users.create")
+    ensure_permission(current_user, "users.create", "procurement.vendor.login.manage")
 
     # -- Validate login-account fields when requested --
     if payload.create_login_account:
-        if not payload.password or len(payload.password.strip()) < 6:
+        if not payload.password or len(payload.password.strip()) < 8:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password is required (min 6 characters) when creating a login account",
+                detail="Password is required (min 8 characters) when creating a login account",
             )
 
         # Check email uniqueness in users collection
@@ -396,7 +398,58 @@ async def vendors(params=Depends(list_params), status_filter: str | None = None,
     await guard_procurement_read(db, current_user)
     skip, limit, search, sort_by, sort_dir = params
     filters = {"status": status_filter} if status_filter else None
-    return page(await list_docs(db, "vendors", skip, limit, search, ["vendor_name", "contact_person", "email", "phone"], filters, sort_by, sort_dir))
+    result = page(await list_docs(db, "vendors", skip, limit, search, ["vendor_name", "contact_person", "email", "phone"], filters, sort_by, sort_dir))
+    if has_permission(current_user, "users.create", "procurement.vendor.login.manage"):
+        logins = await vendor_logins(db, [item["_id"] for item in result["items"]])
+        for item in result["items"]:
+            login = logins.get(str(item["_id"]))
+            item["login_email"] = login["email"] if login else None
+    return result
+
+
+async def vendor_logins(db, vendor_ids: list) -> dict:
+    """Vendor portal users keyed by the vendor record they belong to."""
+    ids = [str(vendor_id) for vendor_id in vendor_ids]
+    users = await db.users.find({"role": "vendor", "vendor_id": {"$in": ids}}, {"email": 1, "vendor_id": 1}).to_list(len(ids) * 2 + 1)
+    return {str(user["vendor_id"]): user for user in users}
+
+
+@router.post("/vendors/{vendor_id}/login", status_code=status.HTTP_201_CREATED)
+async def create_vendor_login(vendor_id: str, payload: VendorLoginCreate, current_user=Depends(get_current_user), db=Depends(get_database)):
+    """Give an existing vendor record a portal login (one per vendor)."""
+    ensure_permission(current_user, "users.create", "procurement.vendor.login.manage")
+    vendor = await get_doc(db, "vendors", vendor_id)
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Vendor not found")
+    if (await vendor_logins(db, [vendor_id])).get(str(vendor_id)):
+        raise HTTPException(status_code=409, detail="This vendor already has a portal login")
+    email = payload.email or vendor.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Enter an email for the login")
+    if await get_user_by_email(db, email):
+        raise HTTPException(status_code=409, detail="This email is already registered as a user account")
+    user_doc = await create_auth_user(db, UserCreate(
+        email=email,
+        full_name=vendor.get("contact_person") or vendor.get("vendor_name") or "Vendor",
+        role="vendor",
+        status="active",
+        vendor_id=str(vendor_id),
+        password=payload.password,
+    ))
+    await record_audit(db, "vendor.login.created", actor=current_user, resource_type="vendor", resource_id=str(vendor_id), details={"email": email})
+    return {"message": f"Portal login created. Login email: {email}", "login_email": email, "user_id": str(user_doc["_id"])}
+
+
+@router.put("/vendors/{vendor_id}/login/password")
+async def reset_vendor_password(vendor_id: str, payload: VendorPasswordReset, current_user=Depends(get_current_user), db=Depends(get_database)):
+    """Set a new password for a vendor's portal login (only vendor-role users)."""
+    ensure_permission(current_user, "users.create", "procurement.vendor.login.manage")
+    login = (await vendor_logins(db, [vendor_id])).get(str(vendor_id))
+    if not login:
+        raise HTTPException(status_code=404, detail="This vendor has no portal login")
+    await db.users.update_one({"_id": login["_id"], "role": "vendor"}, {"$set": {"password_hash": hash_password(payload.password), "updated_at": datetime.utcnow()}})
+    await record_audit(db, "vendor.login.password_reset", actor=current_user, resource_type="vendor", resource_id=str(vendor_id), details={"email": login["email"]})
+    return {"message": f"Password updated for {login['email']}."}
 
 
 @router.get("/vendors/active")

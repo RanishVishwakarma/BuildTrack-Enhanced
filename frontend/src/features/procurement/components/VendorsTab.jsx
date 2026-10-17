@@ -7,6 +7,7 @@ import { StatusBadge } from "../../../components/common/StatusBadge.jsx";
 import { Button } from "../../../components/ui/Button.jsx";
 import { Input } from "../../../components/ui/Input.jsx";
 import { Modal } from "../../../components/ui/Modal.jsx";
+import { PasswordInput } from "../../../components/ui/PasswordInput.jsx";
 import { Select } from "../../../components/ui/Select.jsx";
 import { Textarea } from "../../../components/ui/Textarea.jsx";
 import { confirmAction, useAction } from "../../../hooks/useAction.js";
@@ -14,7 +15,15 @@ import { can } from "../../../lib/roles.js";
 import { formatDateTime, getId } from "../../../lib/utils.js";
 import { useAuth } from "../../auth/context/AuthContext.jsx";
 import { useProcurementList } from "../hooks/useProcurementList.js";
-import { createVendor, createVendorWithAccount, deleteVendor, getVendors, updateVendor } from "../services/procurementService.js";
+import {
+  createVendor,
+  createVendorLogin,
+  createVendorWithAccount,
+  deleteVendor,
+  getVendors,
+  resetVendorPassword,
+  updateVendor,
+} from "../services/procurementService.js";
 import { ListSection, RowActions } from "./ListSection.jsx";
 
 // Field rules from VendorBase in backend/app/modules/procurement/models.py.
@@ -33,8 +42,8 @@ const vendorSchema = z
     create_login_account: z.boolean(),
     password: z.string().optional(),
   })
-  .refine((values) => !values.create_login_account || (values.password || "").length >= 6, {
-    message: "Password must be at least 6 characters to create a login.",
+  .refine((values) => !values.create_login_account || (values.password || "").length >= 8, {
+    message: "Password must be at least 8 characters to create a login.",
     path: ["password"],
   });
 
@@ -111,15 +120,70 @@ function VendorFormModal({ open, vendor, onClose, onSaved }) {
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
         </Select>
-        {!editing && can.adminOnly(user) ? (
+        {!editing && can.vendorLoginManage(user) ? (
           <div className="space-y-3 rounded-md border border-border p-3 sm:col-span-2">
             <label className="flex items-center gap-2 text-sm font-medium">
               <input type="checkbox" {...form.register("create_login_account")} />
               Also create a vendor portal login for this email
             </label>
-            {createLogin ? <Input autoComplete="new-password" label="Login password" type="password" {...form.register("password")} error={errors.password?.message} /> : null}
+            {createLogin ? <PasswordInput autoComplete="new-password" label="Login password" {...form.register("password")} error={errors.password?.message} /> : null}
           </div>
         ) : null}
+      </form>
+    </Modal>
+  );
+}
+
+const loginSchema = z
+  .object({
+    email: z.string().trim().email("Enter a valid email."),
+    password: z.string().min(8, "Password must be at least 8 characters."),
+    confirmPassword: z.string(),
+  })
+  .refine((values) => values.password === values.confirmPassword, { message: "Passwords do not match.", path: ["confirmPassword"] });
+
+// Creates a portal login for an existing vendor, or resets its password.
+function VendorLoginModal({ vendor, onClose, onSaved }) {
+  const { run, pending } = useAction();
+  const resetting = Boolean(vendor?.login_email);
+  const form = useForm({
+    resolver: zodResolver(loginSchema),
+    values: vendor ? { email: vendor.login_email || vendor.email || "", password: "", confirmPassword: "" } : undefined,
+  });
+  const errors = form.formState.errors;
+
+  const submit = form.handleSubmit(async ({ email, password }) => {
+    const result = await run(
+      "login",
+      () => (resetting ? resetVendorPassword(getId(vendor), password) : createVendorLogin(getId(vendor), { email, password })),
+      { success: (response) => response?.message, error: resetting ? "Unable to reset the password." : "Unable to create the login." },
+    );
+    if (result) onSaved();
+  });
+
+  return (
+    <Modal
+      footer={
+        <>
+          <Button disabled={Boolean(pending)} onClick={onClose} variant="secondary">Cancel</Button>
+          <Button disabled={Boolean(pending)} form="vendor-login-form" type="submit">
+            {pending ? "Saving..." : resetting ? "Reset password" : "Create login"}
+          </Button>
+        </>
+      }
+      onClose={onClose}
+      open={Boolean(vendor)}
+      title={resetting ? `Reset password for ${vendor?.vendor_name}` : `Portal login for ${vendor?.vendor_name}`}
+    >
+      <form className="grid gap-4" id="vendor-login-form" noValidate onSubmit={submit}>
+        <p className="text-sm text-muted">
+          {resetting
+            ? "Set a new password and share it with the vendor privately."
+            : "The vendor signs in with this email to see purchase orders, record deliveries and submit invoices."}
+        </p>
+        <Input disabled={resetting} label="Login email" type="email" {...form.register("email")} error={errors.email?.message} />
+        <PasswordInput autoComplete="new-password" label={resetting ? "New password" : "Password"} {...form.register("password")} error={errors.password?.message} />
+        <PasswordInput autoComplete="new-password" label="Confirm password" {...form.register("confirmPassword")} error={errors.confirmPassword?.message} />
       </form>
     </Modal>
   );
@@ -131,7 +195,9 @@ export function VendorsTab() {
   const { run } = useAction();
   const [form, setForm] = useState({ open: false, vendor: null });
   const [details, setDetails] = useState(null);
+  const [loginFor, setLoginFor] = useState(null);
   const isPM = can.procurementProjectManager(user);
+  const manageLogins = can.vendorLoginManage(user);
 
   async function remove(vendor) {
     if (!confirmAction(`Delete vendor ${vendor.vendor_name}? This cannot be undone.`)) return;
@@ -146,6 +212,9 @@ export function VendorsTab() {
     { key: "materials_supplied", header: "Materials", render: (row) => (row.materials_supplied || []).join(", ") || "Not set" },
     { key: "rating", header: "Rating", render: (row) => `${Number(row.rating || 0).toFixed(1)} / 5` },
     { key: "status", header: "Status", render: (row) => <StatusBadge status={row.status} /> },
+    ...(manageLogins
+      ? [{ key: "login_email", header: "Portal login", render: (row) => (row.login_email ? row.login_email : <span className="text-muted">None</span>) }]
+      : []),
     {
       key: "actions",
       header: "Actions",
@@ -153,6 +222,9 @@ export function VendorsTab() {
         <RowActions>
           <Button onClick={() => setDetails(row)} size="sm" variant="secondary">View</Button>
           {isPM ? <Button onClick={() => setForm({ open: true, vendor: row })} size="sm" variant="secondary">Edit</Button> : null}
+          {manageLogins ? (
+            <Button onClick={() => setLoginFor(row)} size="sm" variant="secondary">{row.login_email ? "Reset password" : "Create login"}</Button>
+          ) : null}
           {can.adminOnly(user) ? <Button onClick={() => remove(row)} size="sm" variant="danger">Delete</Button> : null}
         </RowActions>
       ),
@@ -180,6 +252,7 @@ export function VendorsTab() {
         open={form.open}
         vendor={form.vendor}
       />
+      <VendorLoginModal onClose={() => setLoginFor(null)} onSaved={() => { setLoginFor(null); list.reload(); }} vendor={loginFor} />
       <Modal onClose={() => setDetails(null)} open={Boolean(details)} title={details?.vendor_name || "Vendor"}>
         {details ? (
           <DetailList
@@ -193,6 +266,7 @@ export function VendorsTab() {
               ["Materials supplied", (details.materials_supplied || []).join(", ")],
               ["Rating", `${Number(details.rating || 0).toFixed(1)} / 5`],
               ["Status", <StatusBadge key="s" status={details.status} />],
+              ...(manageLogins ? [["Portal login", details.login_email || "None"]] : []),
               ["Created", formatDateTime(details.created_at)],
             ]}
           />

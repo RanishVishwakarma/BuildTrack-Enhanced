@@ -86,9 +86,20 @@ class VendorCreateWithAccount(VendorBase):
     create_login_account: bool = False
     password: Optional[str] = Field(
         default=None,
-        min_length=6,
+        min_length=8,
         description="Login password — required when create_login_account is True",
     )
+
+
+class VendorLoginCreate(BaseModel):
+    """Portal login for an existing vendor record. Email defaults to the vendor's."""
+
+    email: Optional[EmailStr] = None
+    password: str = Field(..., min_length=8, max_length=128)
+
+
+class VendorPasswordReset(BaseModel):
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 class VendorUpdate(BaseModel):
