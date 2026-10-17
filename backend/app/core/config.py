@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # anyone could reset anyone's password. Ignored when APP_ENV=production.
     password_reset_return_token: bool = Field(default=False, validation_alias="PASSWORD_RESET_RETURN_TOKEN")
 
+    # --- Your company's GSTIN: decides CGST+SGST (same state as the vendor)
+    # or IGST (different state) on purchase orders. Empty = split not worked out.
+    company_gstin: str | None = Field(default=None, validation_alias="COMPANY_GSTIN")
+
     # --- AI (Anthropic Claude). Unset key = AI features report "not configured".
     anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     # Which engine answers Site Assistant chat questions:
@@ -98,7 +102,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    @field_validator("anthropic_api_key", "anthropic_workspace_id", "twilio_account_sid", "twilio_auth_token", "twilio_from_number", "public_base_url", "smtp_host", mode="before")
+    @field_validator("company_gstin", "anthropic_api_key", "anthropic_workspace_id", "twilio_account_sid", "twilio_auth_token", "twilio_from_number", "public_base_url", "smtp_host", mode="before")
     @classmethod
     def blank_is_unset(cls, value):
         """Treat empty or whitespace-only secrets as not configured."""

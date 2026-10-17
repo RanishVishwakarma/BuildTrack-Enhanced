@@ -12,6 +12,7 @@ from reportlab.pdfgen import canvas
 
 from app.core.config import BASE_DIR
 from app.core.audit import record_audit
+from app.modules.procurement.gst import GSTError, config as gst_settings
 from app.core.permissions import ensure_permission, has_permission
 from app.core.security import get_current_user
 from app.db.mongodb import get_database
@@ -1116,10 +1117,21 @@ async def get_po(po_id: str, current_user=Depends(get_current_user), db=Depends(
 @router.put("/purchase-orders/{po_id}", response_model=PurchaseOrder)
 async def edit_po(po_id: str, po: PurchaseOrderUpdate, current_user=Depends(get_current_user), db=Depends(get_database)):
     require_role(current_user, "project_manager")
-    doc = await update_purchase_order(db, po_id, po.model_dump(exclude_unset=True), current_user)
+    try:
+        doc = await update_purchase_order(db, po_id, po.model_dump(exclude_unset=True), current_user)
+    except GSTError as error:
+        raise HTTPException(status_code=422, detail=str(error))
     if not doc:
         raise HTTPException(status_code=404, detail="Purchase order not found")
     return PurchaseOrder(**serialize_doc(doc))
+
+
+@router.get("/gst-config")
+async def gst_config(current_user=Depends(get_current_user)):
+    """GST slabs and the company's state code, so forms can preview the same
+    calculation the server applies on save."""
+    await guard_procurement_read(None, current_user, allow_vendor_list=True)
+    return gst_settings()
 
 
 @router.patch("/purchase-orders/{po_id}/status", response_model=PurchaseOrder)

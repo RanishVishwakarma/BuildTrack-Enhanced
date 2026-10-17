@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { DetailList } from "../../../components/common/DetailList.jsx";
@@ -9,16 +9,20 @@ import { Input } from "../../../components/ui/Input.jsx";
 import { Modal } from "../../../components/ui/Modal.jsx";
 import { Select } from "../../../components/ui/Select.jsx";
 import { confirmAction, useAction } from "../../../hooks/useAction.js";
+import { useAsyncData } from "../../../hooks/useAsyncData.js";
+import { GST_SLABS, describeSupply, previewGst } from "../../../lib/gst.js";
 import { can } from "../../../lib/roles.js";
 import { dateInputToIso, formatCurrency, formatDate, formatDateTime, formatNumber, formatStatus, getId, toDateInput } from "../../../lib/utils.js";
 import { downloadBlob } from "../../../services/fileDownload.js";
 import { useAuth } from "../../auth/context/AuthContext.jsx";
+import { getInventory } from "../../inventory/services/inventoryService.js";
 import { useProcurementList } from "../hooks/useProcurementList.js";
 import { useProcurementLookups } from "../hooks/useProcurementLookups.js";
 import {
   createPurchaseOrder,
   deletePurchaseOrder,
   downloadPurchaseOrderPdf,
+  getGstConfig,
   getPurchaseOrders,
   sendPurchaseOrder,
   updatePurchaseOrder,
@@ -28,16 +32,18 @@ import { ListSection, RowActions } from "./ListSection.jsx";
 const PO_STATUSES = ["created", "sent", "accepted", "rejected", "processing", "shipped", "delivered", "received", "cancelled"];
 
 const money = z.coerce.number({ invalid_type_error: "Enter an amount." }).min(0, "Cannot be negative.");
+// GST is chosen as a rate; the amount is calculated (server-side on save).
 const createSchema = z.object({
   request_id: z.string().min(1, "Select a vendor-accepted material request."),
   unit_price: money,
-  gst: money,
+  gst_rate: z.string().min(1, "Select a GST rate."),
   expected_delivery_date: z.string().min(1, "Expected delivery date is required."),
 });
 const editSchema = z.object({
   quantity: z.coerce.number({ invalid_type_error: "Enter a quantity." }).gt(0, "Quantity must be greater than 0."),
   unit_price: money,
-  gst: money,
+  // "" keeps the amount of an older order that was saved without a rate.
+  gst_rate: z.string(),
   expected_delivery_date: z.string().min(1, "Expected delivery date is required."),
   status: z.enum(PO_STATUSES),
 });
@@ -49,6 +55,8 @@ const canGeneratePo = (request) => request.status === "vendor_accepted" && !requ
 export function PurchaseOrderFormModal({ open, request, purchaseOrder, onClose, onSaved }) {
   const editing = Boolean(purchaseOrder);
   const lookups = useProcurementLookups({ requests: open && !editing, vendors: open });
+  const gstConfig = useAsyncData(getGstConfig, [], { enabled: open });
+  const inventory = useAsyncData(getInventory, [], { initialData: [], enabled: open && !editing });
   const { run, pending } = useAction();
   const eligible = lookups.requests.filter(canGeneratePo);
   const form = useForm({
@@ -58,11 +66,11 @@ export function PurchaseOrderFormModal({ open, request, purchaseOrder, onClose, 
         ? {
             quantity: purchaseOrder.quantity,
             unit_price: purchaseOrder.unit_price ?? 0,
-            gst: purchaseOrder.gst ?? 0,
+            gst_rate: purchaseOrder.gst_rate === null || purchaseOrder.gst_rate === undefined ? "" : String(purchaseOrder.gst_rate),
             expected_delivery_date: toDateInput(purchaseOrder.expected_delivery_date),
             status: purchaseOrder.status || "created",
           }
-        : { request_id: getId(request) || "", unit_price: 0, gst: 0, expected_delivery_date: request?.required_date ? toDateInput(request.required_date) : "" }
+        : { request_id: getId(request) || "", unit_price: 0, gst_rate: "", expected_delivery_date: request?.required_date ? toDateInput(request.required_date) : "" }
       : undefined,
   });
   const errors = form.formState.errors;
@@ -70,11 +78,32 @@ export function PurchaseOrderFormModal({ open, request, purchaseOrder, onClose, 
   const selected = editing ? null : request && getId(request) === requestId ? request : eligible.find((item) => getId(item) === requestId);
   const quantity = Number(editing ? form.watch("quantity") : selected?.quantity) || 0;
   const subtotal = quantity * (Number(form.watch("unit_price")) || 0);
-  const total = subtotal + (Number(form.watch("gst")) || 0);
+  const rate = form.watch("gst_rate");
+  const vendorId = editing ? purchaseOrder.vendor_id : selected?.vendor_id;
+  const vendorGstin = lookups.vendors.find((vendor) => getId(vendor) === String(vendorId || ""))?.gst_number;
+  const tax = previewGst(subtotal, rate, gstConfig.data?.company_state_code, vendorGstin);
+  const legacyGst = editing && rate === "" ? Number(purchaseOrder.gst) || 0 : null;
+  const total = subtotal + (tax ? tax.gst : legacyGst || 0);
+  // Default the rate from the material's inventory record when one is set.
+  const materialDefault = (inventory.data || []).find(
+    (item) =>
+      (selected?.material_id && getId(item) === selected.material_id) ||
+      (selected && String(item.material_name || "").toLowerCase() === String(selected.material_name || "").toLowerCase()),
+  )?.gst_rate;
+  useEffect(() => {
+    if (!editing && selected && materialDefault !== null && materialDefault !== undefined && !form.getValues("gst_rate")) {
+      form.setValue("gst_rate", String(materialDefault));
+    }
+  }, [editing, selected, materialDefault, form]);
 
   const submit = form.handleSubmit(async (values) => {
     if (editing) {
-      const payload = { ...values, expected_delivery_date: dateInputToIso(values.expected_delivery_date) };
+      const { gst_rate: chosenRate, ...rest } = values;
+      const payload = {
+        ...rest,
+        expected_delivery_date: dateInputToIso(values.expected_delivery_date),
+        ...(chosenRate === "" ? {} : { gst_rate: Number(chosenRate) }),
+      };
       const result = await run("save", () => updatePurchaseOrder(getId(purchaseOrder), payload), { success: "Purchase order updated.", error: "Unable to update purchase order." });
       if (result) onSaved();
       return;
@@ -91,7 +120,7 @@ export function PurchaseOrderFormModal({ open, request, purchaseOrder, onClose, 
       material_id: selected.material_id || undefined,
       quantity: selected.quantity,
       unit_price: values.unit_price,
-      gst: values.gst,
+      gst_rate: Number(values.gst_rate),
       expected_delivery_date: dateInputToIso(values.expected_delivery_date),
       status: "created",
     };
@@ -141,16 +170,27 @@ export function PurchaseOrderFormModal({ open, request, purchaseOrder, onClose, 
         ) : null}
         {editing ? <Input label="Quantity" min="0" step="any" type="number" {...form.register("quantity")} error={errors.quantity?.message} /> : null}
         <Input label="Unit price (Rs)" min="0" step="any" type="number" {...form.register("unit_price")} error={errors.unit_price?.message} />
-        <Input label="GST amount (Rs)" min="0" step="any" type="number" {...form.register("gst")} error={errors.gst?.message} />
+        <Select label="GST rate" {...form.register("gst_rate")} error={errors.gst_rate?.message}>
+          {editing && purchaseOrder.gst_rate == null ? <option value="">Keep entered amount ({formatCurrency(purchaseOrder.gst)})</option> : <option value="">Select GST rate</option>}
+          {GST_SLABS.map((slab) => <option key={slab} value={String(slab)}>{slab}%</option>)}
+        </Select>
         <Input label="Expected delivery" type="date" {...form.register("expected_delivery_date")} error={errors.expected_delivery_date?.message} />
         {editing ? (
           <Select label="Status" {...form.register("status")}>
             {PO_STATUSES.map((status) => <option key={status} value={status}>{formatStatus(status)}</option>)}
           </Select>
         ) : null}
-        <p className="text-sm text-muted sm:col-span-2">
-          Subtotal {formatCurrency(subtotal)} · Total {formatCurrency(total)}
-        </p>
+        <div aria-live="polite" className="rounded-md border border-border p-3 text-sm sm:col-span-2">
+          <p>
+            Subtotal {formatCurrency(subtotal)}
+            {tax ? ` · GST ${rate}% ${formatCurrency(tax.gst)}` : legacyGst !== null ? ` · GST ${formatCurrency(legacyGst)}` : ""}
+            {" · "}<span className="font-semibold">Total {formatCurrency(total)}</span>
+          </p>
+          {tax?.supplyType === "intra_state" ? <p className="text-muted">CGST {formatCurrency(tax.cgst)} + SGST {formatCurrency(tax.sgst)} (same state)</p> : null}
+          {tax?.supplyType === "inter_state" ? <p className="text-muted">IGST {formatCurrency(tax.igst)} (different states)</p> : null}
+          {tax?.supplyType === "undetermined" ? <p className="text-muted">{describeSupply("undetermined")}</p> : null}
+          {!editing && selected && materialDefault != null ? <p className="text-xs text-muted">Rate pre-filled from the material&apos;s inventory record.</p> : null}
+        </div>
       </form>
     </Modal>
   );
@@ -234,7 +274,13 @@ export function PurchaseOrdersTab() {
               ["Quantity", formatNumber(details.quantity)],
               ["Unit price", formatCurrency(details.unit_price)],
               ["Subtotal", formatCurrency(details.subtotal)],
-              ["GST", formatCurrency(details.gst)],
+              ["GST", details.gst_rate != null ? `${formatCurrency(details.gst)} (${details.gst_rate}%)` : formatCurrency(details.gst)],
+              ...(details.supply_type === "intra_state"
+                ? [["CGST + SGST", `${formatCurrency(details.cgst)} + ${formatCurrency(details.sgst)}`]]
+                : details.supply_type === "inter_state"
+                  ? [["IGST", formatCurrency(details.igst)]]
+                  : []),
+              ["Tax type", describeSupply(details.supply_type)],
               ["Total", formatCurrency(details.total_cost)],
               ["Expected delivery", formatDate(details.expected_delivery_date)],
               ["Status", <StatusBadge key="s" status={details.status} />],

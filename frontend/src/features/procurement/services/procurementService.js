@@ -49,6 +49,12 @@ export async function getMaterials() {
   return Array.isArray(data) ? data : [];
 }
 
+// GST slabs and the company's state code, for previewing PO tax.
+export async function getGstConfig() {
+  const { data } = await api.get(`${base}/gst-config`);
+  return data;
+}
+
 // Purchase orders
 export const getPurchaseOrders = (params) => list(purchaseOrders, params);
 export const createPurchaseOrder = (payload) => send("post", purchaseOrders, payload);

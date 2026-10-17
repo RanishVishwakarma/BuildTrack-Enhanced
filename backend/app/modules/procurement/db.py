@@ -5,6 +5,8 @@ from bson import ObjectId
 from bson.errors import InvalidId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.modules.procurement.gst import GSTError, price_order
+
 
 def oid(value: str) -> ObjectId | None:
     try:
@@ -251,11 +253,11 @@ async def create_purchase_order_from_request(db: AsyncIOMotorDatabase, data: dic
     data["material_id"] = request.get("material_id")
     data["quantity"] = request["quantity"]
     data["po_number"] = await next_code(db, "purchase_orders", "PO")
-    subtotal = float(data["quantity"]) * float(data.get("unit_price") or 0)
-    gst = float(data.get("gst") or 0)
-    data["subtotal"] = subtotal
-    data["gst"] = gst
-    data["total_cost"] = subtotal + gst
+    try:
+        data.update(price_order(data["quantity"], data.get("unit_price"), gst_rate=data.get("gst_rate"),
+                                gst_amount=data.get("gst"), vendor_gstin=vendor.get("gst_number")))
+    except GSTError as error:
+        return None, str(error)
     doc = await create_doc(db, "purchase_orders", data, user)
     await db.material_requests.update_one(
         {"_id": request["_id"]},
@@ -277,13 +279,18 @@ async def create_purchase_order_from_request(db: AsyncIOMotorDatabase, data: dic
 
 
 async def update_purchase_order(db: AsyncIOMotorDatabase, po_id: str, data: dict, user: dict):
-    if "quantity" in data or "unit_price" in data:
+    """Re-price whenever quantity, price or GST changes, so subtotal, GST,
+    split and total always agree (previously the total dropped the GST)."""
+    if {"quantity", "unit_price", "gst", "gst_rate"} & set(data):
         current = await get_doc(db, "purchase_orders", po_id)
         if not current:
             return None
-        quantity = float(data.get("quantity", current.get("quantity", 0)))
-        unit_price = float(data.get("unit_price", current.get("unit_price", 0)))
-        data["total_cost"] = quantity * unit_price
+        vendor = await get_doc(db, "vendors", str(current.get("vendor_id") or "")) if current.get("vendor_id") else None
+        rate = data["gst_rate"] if "gst_rate" in data else current.get("gst_rate")
+        data.update(price_order(
+            data.get("quantity", current.get("quantity", 0)), data.get("unit_price", current.get("unit_price", 0)),
+            gst_rate=rate, gst_amount=data.get("gst", current.get("gst", 0)), vendor_gstin=(vendor or {}).get("gst_number"),
+        ))
     return await update_doc(db, "purchase_orders", po_id, data, user)
 
 

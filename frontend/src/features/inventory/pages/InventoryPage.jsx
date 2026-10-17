@@ -19,6 +19,7 @@ import { useAsyncData } from "../../../hooks/useAsyncData.js";
 import { can } from "../../../lib/roles.js";
 import { formatCurrency, formatDateTime, formatNumber, formatStatus, getId, matchesSearch } from "../../../lib/utils.js";
 import { getApiErrorMessage } from "../../../services/apiError.js";
+import { GST_SLABS } from "../../../lib/gst.js";
 import { useAuth } from "../../auth/context/AuthContext.jsx";
 import {
   createInventoryItem,
@@ -42,6 +43,8 @@ const itemSchema = (editing) =>
     unit_cost: z.coerce.number({ invalid_type_error: "Enter a cost." }).min(0, "Cost cannot be negative."),
     reorder_level: z.coerce.number({ invalid_type_error: "Enter a reorder level." }).int("Whole number only.").min(0, "Cannot be negative."),
     location: z.string().optional(),
+    gst_rate: z.string().optional(),
+    hsn_code: z.string().trim().regex(/^(\d{4,8})?$/, "HSN code is 4 to 8 digits.").optional(),
   });
 
 function ItemFormModal({ open, item, onClose, onSaved }) {
@@ -57,13 +60,21 @@ function ItemFormModal({ open, item, onClose, onSaved }) {
           unit_cost: item?.unit_cost ?? 0,
           reorder_level: item?.reorder_level ?? 10,
           location: item?.location || "",
+          gst_rate: item?.gst_rate === null || item?.gst_rate === undefined ? "" : String(item.gst_rate),
+          hsn_code: item?.hsn_code || "",
         }
       : undefined,
   });
   const errors = form.formState.errors;
 
   const submit = form.handleSubmit(async (values) => {
-    const payload = { ...values, location: values.location || undefined };
+    const payload = {
+      ...values,
+      location: values.location || undefined,
+      // Empty means "no default rate"; null clears a previously saved one.
+      gst_rate: values.gst_rate === "" ? null : Number(values.gst_rate),
+      hsn_code: values.hsn_code || null,
+    };
     const result = await run("save", () => (editing ? updateInventoryItem(getId(item), payload) : createInventoryItem(payload)), {
       success: editing ? "Inventory item updated." : "Inventory item added.",
       error: editing ? "Unable to update inventory item." : "Unable to add inventory item.",
@@ -91,6 +102,12 @@ function ItemFormModal({ open, item, onClose, onSaved }) {
         <Input label="Reorder level" min="0" step="1" type="number" {...form.register("reorder_level")} error={errors.reorder_level?.message} />
         <Input label="Unit cost (Rs)" min="0" step="any" type="number" {...form.register("unit_cost")} error={errors.unit_cost?.message} />
         <Input label="Location" placeholder="Main Warehouse" {...form.register("location")} />
+        <Select label="Default GST rate" {...form.register("gst_rate")}>
+          <option value="">Not set</option>
+          {GST_SLABS.map((rate) => <option key={rate} value={String(rate)}>{rate}%</option>)}
+        </Select>
+        <Input label="HSN code (optional)" inputMode="numeric" placeholder="e.g. 2523" {...form.register("hsn_code")} error={errors.hsn_code?.message} />
+        <p className="text-xs text-muted sm:col-span-2">The GST rate pre-fills purchase orders for this material. Check it against current GST notifications.</p>
       </form>
     </Modal>
   );

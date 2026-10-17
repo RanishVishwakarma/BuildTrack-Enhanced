@@ -185,6 +185,9 @@ class PurchaseOrderBase(BaseModel):
     quantity: float = Field(..., gt=0)
     unit_price: float = Field(..., ge=0)
     gst: float = Field(default=0, ge=0)
+    # GST slab in percent (0, 5, 12, 18, 28). When set, `gst` is calculated
+    # from it; older orders without a rate keep their typed amount.
+    gst_rate: Optional[float] = None
     subtotal: float = Field(default=0, ge=0)
     expected_delivery_date: datetime
     status: POStatus = "created"
@@ -207,6 +210,7 @@ class PurchaseOrderUpdate(BaseModel):
     quantity: Optional[float] = Field(default=None, gt=0)
     unit_price: Optional[float] = Field(default=None, ge=0)
     gst: Optional[float] = Field(default=None, ge=0)
+    gst_rate: Optional[float] = None
     subtotal: Optional[float] = Field(default=None, ge=0)
     expected_delivery_date: Optional[datetime] = None
     status: Optional[POStatus] = None
@@ -218,6 +222,10 @@ class PurchaseOrder(PurchaseOrderBase, MongoModel):
     subtotal: float
     gst: float
     total_cost: float
+    cgst: Optional[float] = None
+    sgst: Optional[float] = None
+    igst: Optional[float] = None
+    supply_type: Optional[str] = None
     rejection_reason: Optional[str] = None
     created_at: datetime
     updated_at: datetime

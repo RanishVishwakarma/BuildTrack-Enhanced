@@ -114,7 +114,9 @@ describe("material requests", () => {
 describe("purchase orders", () => {
   it("generates a PO from a vendor-accepted request", async () => {
     on("get", "/procurement/material-requests", { items: [acceptedRequest], total: 1 });
-    on("get", "/procurement/vendors", { items: [{ _id: "v1", vendor_name: "Acme Supplies", status: "active" }], total: 1 });
+    on("get", "/procurement/vendors", { items: [{ _id: "v1", vendor_name: "Acme Supplies", status: "active", gst_number: "27AAFCV9876K1Z2" }], total: 1 });
+    on("get", "/procurement/gst-config", { slabs: [0, 5, 12, 18, 28], company_state_code: "27", company_gstin_configured: true });
+    on("get", "/inventory", [{ _id: "i1", material_name: "Cement", gst_rate: 28 }]);
     on("post", "/procurement/purchase-orders", ({ body }) => ({ ...body, _id: "po1", po_number: "PO-0001", total_cost: 1000 }));
     const user = userEvent.setup();
     renderApp("/procurement/material-requests", USERS.manager);
@@ -123,13 +125,15 @@ describe("purchase orders", () => {
     const dialog = await screen.findByRole("dialog");
     await user.clear(within(dialog).getByLabelText("Unit price (Rs)"));
     await user.type(within(dialog).getByLabelText("Unit price (Rs)"), "400");
-    await user.clear(within(dialog).getByLabelText("GST amount (Rs)"));
-    await user.type(within(dialog).getByLabelText("GST amount (Rs)"), "3600");
-    expect(within(dialog).getByText(/Subtotal .*20,000 · Total .*23,600/)).toBeInTheDocument();
+    // The rate is pre-filled from the material's inventory record, then changed.
+    await waitFor(() => expect(within(dialog).getByLabelText("GST rate")).toHaveValue("28"));
+    await user.selectOptions(within(dialog).getByLabelText("GST rate"), "18");
+    expect(within(dialog).getByText(/Total .*23,600/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/CGST .*1,800 \+ SGST .*1,800/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Generate PO" }));
 
     await waitFor(() => expect(callsTo("post", "/procurement/purchase-orders")).toHaveLength(1));
-    expect(callsTo("post", "/procurement/purchase-orders")[0].body).toMatchObject({ request_id: "r2", vendor_id: "v1", materials: "Cement", quantity: 50, unit_price: 400, gst: 3600, status: "created" });
+    expect(callsTo("post", "/procurement/purchase-orders")[0].body).toMatchObject({ request_id: "r2", vendor_id: "v1", materials: "Cement", quantity: 50, unit_price: 400, gst_rate: 18, status: "created" });
     expect(await screen.findByText("Purchase order PO-0001 created.")).toBeInTheDocument();
   });
 
