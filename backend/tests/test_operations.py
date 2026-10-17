@@ -34,7 +34,7 @@ async def seed(db):
         user("admin", "admin", "admin@ops-tests.io"), user("admin2", "admin", "admin2@ops-tests.io"),
         user("pm", "projectmanager", "pm@ops-tests.io"), user("pm_other", "projectmanager", "pm2@ops-tests.io"),
         user("engineer", "siteengineer", "eng@ops-tests.io"),
-        user("worker", "worker", "worker@ops-tests.io", phone="+919800000001", voice_consent=True),
+        user("worker", "worker", "worker@ops-tests.io", worker_id=str(IDS["worker_rec"]), phone="+919800000001", voice_consent=True),
     ])
     pid = str(IDS["project"])
     await db.projects.insert_many([{"_id": IDS["project"], "name": "Skyline", "status": "active"}, {"_id": IDS["other_project"], "name": "Other", "status": "active"}])

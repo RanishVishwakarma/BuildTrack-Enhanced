@@ -41,6 +41,7 @@ PERMISSIONS: dict[str, str] = {
     "workforce.read.assigned": "Read crew, allocations and attendance on assigned projects",
     "workforce.read.sensitive": "Read wages, salaries and payroll",
     "workforce.manage": "Manage workers, allocations, shifts, attendance and payroll",
+    "workforce.login.manage": "Create, link and reset worker logins",
     # Inventory and resources
     "inventory.read.assigned": "Read stock levels",
     "inventory.adjust.assigned": "Create inventory items and stock transactions",
@@ -124,6 +125,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "workforce.read.assigned",
         "workforce.read.sensitive",
         "workforce.manage",
+        "workforce.login.manage",
         "inventory.read.assigned",
         "inventory.adjust.assigned",
         "resources.read.assigned",

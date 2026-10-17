@@ -60,6 +60,7 @@ export const can = {
   procurementProjectManager: (user) => hasPermission(user, "procurement.request.review"),
   procurementVendorManage: (user) => hasPermission(user, "procurement.vendor.manage"),
   vendorLoginManage: (user) => hasPermission(user, "users.create", "procurement.vendor.login.manage"),
+  workerLoginManage: (user) => hasPermission(user, "workforce.login.manage"),
   procurementSiteEngineer: (user) => hasPermission(user, "procurement.request.create"),
   procurementStoreManager: (user) => hasPermission(user, "procurement.delivery.receive"),
   procurementInvoiceManage: (user) => hasPermission(user, "procurement.invoice.manage"),

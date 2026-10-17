@@ -93,34 +93,25 @@ def require_vendor(user: dict) -> str:
     vendor_id = user.get("vendor_id")
     if vendor_id:
         return str(vendor_id)
-    # If not explicitly set, fall back to user _id as vendor identifier
-    return str(user.get("_id", ""))
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This login is not linked to a vendor record. Ask your project manager.",
+    )
 
 
 async def resolve_vendor_id(db, user: dict) -> str:
     """Ensure the logged-in user is a vendor linked to a vendor record and return resolved vendor_id."""
     if str(user.get("role") or "").lower() != "vendor":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Vendor access required")
+    # Only the link saved when the login was created counts; names and
+    # emails are never used to attach a login to a vendor's records.
     vendor_id = user.get("vendor_id")
     if vendor_id:
         return str(vendor_id)
-
-    # Auto-resolve vendor by email or name if vendor_id wasn't populated
-    user_email = user.get("email")
-    user_id_str = str(user.get("_id", ""))
-    vendor = await db.vendors.find_one({
-        "$or": [
-            {"email": user_email},
-            {"contact_person": user.get("full_name") or user.get("name")},
-            {"vendor_name": user.get("full_name") or user.get("name")},
-        ]
-    })
-    if vendor:
-        resolved_id = str(vendor["_id"])
-        await db.users.update_one({"_id": user["_id"]}, {"$set": {"vendor_id": resolved_id}})
-        return resolved_id
-
-    return user_id_str
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This login is not linked to a vendor record. Ask your project manager.",
+    )
 
 
 async def notify_vendor_user(db, vendor_id: str, notification_data: dict):
@@ -131,17 +122,8 @@ async def notify_vendor_user(db, vendor_id: str, notification_data: dict):
 
     users = await db.users.find({
         "role": {"$regex": "^vendor$", "$options": "i"},
-        "$or": [
-            {"vendor_id": {"$in": v_ids}},
-            {"_id": {"$in": v_ids}},
-        ],
+        "vendor_id": {"$in": v_ids},
     }).to_list(50)
-
-    if not users:
-        # Check by vendor doc email
-        vendor = await db.vendors.find_one({"_id": oid(vendor_id)}) if oid(vendor_id) else None
-        if vendor and vendor.get("email"):
-            users = await db.users.find({"email": vendor["email"]}).to_list(10)
 
     for vendor_user in users:
         data = dict(notification_data)
@@ -1016,7 +998,7 @@ async def vendor_create_invoice(
     po = await get_doc(db, "purchase_orders", invoice.purchase_order_id)
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
-    if str(po.get("vendor_id") or "") != str(vendor_id) and str(po.get("vendor_id") or "") != str(current_user.get("_id")):
+    if str(po.get("vendor_id") or "") != str(vendor_id):
         raise HTTPException(status_code=403, detail="You are not the vendor for this purchase order")
 
     # Check for duplicate invoice number

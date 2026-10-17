@@ -6,7 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.access import ensure_project_access, own_worker_ids
 from app.core.permissions import ensure_permission, has_permission
-from app.core.security import get_current_user
+from app.core.audit import record_audit
+from app.core.security import get_current_user, hash_password
+from app.modules.auth.db import create_user as create_auth_user, get_user_by_email
+from app.modules.auth.models import UserCreate
 from app.db.mongodb import get_database
 
 from app.modules.workforce.db import (
@@ -65,6 +68,9 @@ from app.modules.workforce.db import (
 from app.modules.workforce.models import (
     Worker,
     WorkerCreate,
+    WorkerLoginCreate,
+    WorkerLoginLink,
+    WorkerPasswordReset,
     WorkerUpdate,
 
     WorkforceAllocation,
@@ -89,6 +95,8 @@ from app.modules.workforce.models import (
 
 from app.modules.notifications.db import create_notification
 
+
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 router = APIRouter()
 
@@ -500,11 +508,96 @@ async def list_workers_endpoint(
         ]
 
     stats = await get_workers_attendance_stats(db, days=30)
+    logins = await worker_logins(db, [worker["_id"] for worker in workers]) if has_permission(current_user, "workforce.login.manage") else {}
 
     return [
-        Worker(**redact_pay(serialize_worker_doc(worker, stats), current_user))
+        Worker(**redact_pay(serialize_worker_doc(worker, stats), current_user), login_email=(logins.get(str(worker["_id"])) or {}).get("email"))
         for worker in workers
     ]
+
+
+# Worker logins. The link is the user's `worker_id`, set only here; access
+# to a worker's tasks, attendance and pay follows it (app/core/access.py).
+LINKABLE_ROLES = {"worker", "contractor"}
+
+
+async def worker_logins(db, worker_ids: list) -> dict:
+    ids = [str(worker_id) for worker_id in worker_ids]
+    users = await db.users.find({"worker_id": {"$in": ids}}, {"email": 1, "worker_id": 1, "role": 1}).to_list(len(ids) * 2 + 1)
+    return {str(user["worker_id"]): user for user in users}
+
+
+async def worker_for_login(db, worker_id: str) -> dict:
+    worker = await get_worker(db, worker_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    if (await worker_logins(db, [worker_id])).get(str(worker_id)):
+        raise HTTPException(status_code=409, detail="This worker already has a login")
+    return worker
+
+
+@router.post("/workers/{worker_id}/login", status_code=status.HTTP_201_CREATED)
+async def create_worker_login(worker_id: str, payload: WorkerLoginCreate, current_user=Depends(get_current_user), db=Depends(get_database)):
+    """Create a worker-role login for this worker record."""
+    ensure_permission(current_user, "workforce.login.manage")
+    worker = await worker_for_login(db, worker_id)
+    email = (payload.email or worker.get("email") or "").strip()
+    if not EMAIL_PATTERN.match(email):
+        raise HTTPException(status_code=400, detail="Enter a valid email for the login")
+    if await get_user_by_email(db, email):
+        raise HTTPException(status_code=409, detail="This email already has an account. Use Link existing account instead.")
+    user = await create_auth_user(db, UserCreate(
+        email=email,
+        full_name=f"{worker.get('first_name', '')} {worker.get('last_name', '')}".strip() or "Worker",
+        role="worker",
+        status="active",
+        worker_id=str(worker["_id"]),
+        password=payload.password,
+    ))
+    await record_audit(db, "worker.login.created", actor=current_user, resource_type="worker", resource_id=worker_id, details={"email": email})
+    return {"message": f"Login created. Login email: {email}", "login_email": email, "user_id": str(user["_id"])}
+
+
+@router.post("/workers/{worker_id}/login/link")
+async def link_worker_login(worker_id: str, payload: WorkerLoginLink, current_user=Depends(get_current_user), db=Depends(get_database)):
+    """Attach an account the worker registered themselves."""
+    ensure_permission(current_user, "workforce.login.manage")
+    await worker_for_login(db, worker_id)
+    user = await get_user_by_email(db, payload.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="No account with this email")
+    if str(user.get("role") or "").lower() not in LINKABLE_ROLES:
+        raise HTTPException(status_code=400, detail="Only worker or contractor accounts can be linked to a worker")
+    if user.get("worker_id") and str(user["worker_id"]) != str(worker_id):
+        raise HTTPException(status_code=409, detail="This account is already linked to another worker")
+    await db.users.update_one({"_id": user["_id"]}, {"$set": {"worker_id": str(worker_id), "updated_at": datetime.utcnow()}})
+    await record_audit(db, "worker.login.linked", actor=current_user, resource_type="worker", resource_id=worker_id, details={"email": user["email"]})
+    return {"message": f"Linked {user['email']} to this worker.", "login_email": user["email"]}
+
+
+@router.delete("/workers/{worker_id}/login")
+async def unlink_worker_login(worker_id: str, current_user=Depends(get_current_user), db=Depends(get_database)):
+    """Detach the login from this worker. The account itself is kept."""
+    ensure_permission(current_user, "workforce.login.manage")
+    login = (await worker_logins(db, [worker_id])).get(str(worker_id))
+    if not login:
+        raise HTTPException(status_code=404, detail="This worker has no login")
+    await db.users.update_one({"_id": login["_id"]}, {"$unset": {"worker_id": ""}, "$set": {"updated_at": datetime.utcnow()}})
+    await record_audit(db, "worker.login.unlinked", actor=current_user, resource_type="worker", resource_id=worker_id, details={"email": login["email"]})
+    return {"message": f"{login['email']} is no longer linked to this worker."}
+
+
+@router.put("/workers/{worker_id}/login/password")
+async def reset_worker_password(worker_id: str, payload: WorkerPasswordReset, current_user=Depends(get_current_user), db=Depends(get_database)):
+    ensure_permission(current_user, "workforce.login.manage")
+    login = (await worker_logins(db, [worker_id])).get(str(worker_id))
+    if not login:
+        raise HTTPException(status_code=404, detail="This worker has no login")
+    if str(login.get("role") or "").lower() not in LINKABLE_ROLES:
+        raise HTTPException(status_code=400, detail="Only worker or contractor passwords can be reset here")
+    await db.users.update_one({"_id": login["_id"]}, {"$set": {"password_hash": hash_password(payload.password), "updated_at": datetime.utcnow()}})
+    await record_audit(db, "worker.login.password_reset", actor=current_user, resource_type="worker", resource_id=worker_id, details={"email": login["email"]})
+    return {"message": f"Password updated for {login['email']}."}
 
 
 @router.get(

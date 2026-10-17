@@ -103,8 +103,27 @@ class WorkerUpdate(BaseModel):
     status: Optional[str] = None
 
 
+class WorkerLoginCreate(BaseModel):
+    """Login for a worker record. Email defaults to the worker's."""
+
+    email: Optional[str] = None
+    password: str = Field(..., min_length=8, max_length=128)
+
+
+class WorkerLoginLink(BaseModel):
+    """Attach an account the worker already registered."""
+
+    email: str
+
+
+class WorkerPasswordReset(BaseModel):
+    password: str = Field(..., min_length=8, max_length=128)
+
+
 class Worker(WorkerBase):
     id: str = Field(alias="_id")
+    # Shown only to users who manage worker logins.
+    login_email: Optional[str] = None
     # Wage fields are None when the reader lacks workforce.read.sensitive.
     salary_type: Optional[str] = None
     hourly_rate: Optional[float] = None

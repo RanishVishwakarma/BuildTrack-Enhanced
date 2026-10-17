@@ -27,6 +27,11 @@ export const getWorker = (id) => get(`${endpoints.workforceWorkers}/${id}`);
 export const createWorker = (payload) => send("post", endpoints.workforceWorkers, payload);
 export const updateWorker = (id, payload) => send("put", `${endpoints.workforceWorkers}/${id}`, payload);
 export const deleteWorker = (id) => send("delete", `${endpoints.workforceWorkers}/${id}`);
+// Worker logins (backend links them by users.worker_id).
+export const createWorkerLogin = (id, payload) => send("post", `${endpoints.workforceWorkers}/${id}/login`, payload);
+export const linkWorkerLogin = (id, email) => send("post", `${endpoints.workforceWorkers}/${id}/login/link`, { email });
+export const unlinkWorkerLogin = (id) => send("delete", `${endpoints.workforceWorkers}/${id}/login`);
+export const resetWorkerPassword = (id, password) => send("put", `${endpoints.workforceWorkers}/${id}/login/password`, { password });
 
 // Allocations
 export const getProjectAllocations = (projectId) => get(`${base}/allocations/project/${projectId}`);

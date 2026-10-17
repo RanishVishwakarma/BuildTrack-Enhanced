@@ -33,7 +33,7 @@ async def seed(db):
         user("admin", "admin", "admin@site-tests.io"),
         user("pm", "projectmanager", "pm@site-tests.io"),
         user("pm_other", "projectmanager", "pm2@site-tests.io"),
-        user("worker", "worker", "worker@site-tests.io"),
+        user("worker", "worker", "worker@site-tests.io", worker_id=str(IDS["worker_rec"])),
         user("client", "client", "client@site-tests.io"),
     ])
     pid = str(IDS["project"])

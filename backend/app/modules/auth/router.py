@@ -31,7 +31,6 @@ from app.modules.auth.db import (
 )
 from app.modules.auth.models import User, UserCreate
 from app.modules.notifications.db import create_notification
-from app.modules.workforce.db import get_worker_by_email
 
 router = APIRouter()
 
@@ -549,23 +548,12 @@ async def login(
     worker_id = None
     contractor_id = None
 
-    if user_role == "worker":
-        worker = await get_worker_by_email(db, user["email"])
-        if worker:
-            worker_id = str(worker["_id"])
-    elif user_role == "contractor":
-        user_name = (user.get("full_name") or user.get("name") or "").strip()
-        user_email = (user.get("email") or "").strip()
-        worker = await db.workers.find_one({
-            "$or": [
-                {"email": {"$regex": f"^{re.escape(user_email)}$", "$options": "i"}},
-                {"first_name": {"$regex": f"^{re.escape(user_name)}$", "$options": "i"}},
-                {"last_name": {"$regex": f"^{re.escape(user_name)}$", "$options": "i"}},
-            ]
-        })
-        if worker:
-            contractor_id = str(worker["_id"])
-            worker_id = str(worker["_id"])
+    # Only the link a manager saved on the user counts; emails and names
+    # are never used to attach someone to a worker record.
+    if user.get("worker_id"):
+        worker_id = str(user["worker_id"])
+        if user_role == "contractor":
+            contractor_id = worker_id
 
     # --------------------------------------------------------
     # Create JWT
@@ -649,11 +637,8 @@ async def social_login(
     # --------------------------------------------------------
     worker_id = None
 
-    if normalize_role(user.get("role")) == "worker":
-        worker = await get_worker_by_email(db, user["email"])
-
-        if worker:
-            worker_id = str(worker["_id"])
+    if user.get("worker_id"):
+        worker_id = str(user["worker_id"])
 
     # --------------------------------------------------------
     # Create JWT

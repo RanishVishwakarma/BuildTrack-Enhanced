@@ -23,6 +23,7 @@ import { dateInputToIso, formatCurrency, formatDate, formatStatus, getId, matche
 import { getApiErrorMessage } from "../../../services/apiError.js";
 import { useAuth } from "../../auth/context/AuthContext.jsx";
 import { createWorker, deleteWorker, getWorkers, updateWorker } from "../services/workforceService.js";
+import { WorkerLoginModal } from "../components/WorkerLoginModal.jsx";
 import { EMPLOYMENT_TYPES, SALARY_TYPES, WORKER_CATEGORIES, WORKER_STATUSES } from "../constants.js";
 
 const workerSchema = z.object({
@@ -142,8 +143,10 @@ export function WorkforcePage() {
   const [filters, setFilters] = useState({ query: "", category: "", status: "", project: "" });
   const [form, setForm] = useState({ open: false, worker: null });
   const [details, setDetails] = useState(null);
+  const [loginFor, setLoginFor] = useState(null);
   const workers = data;
   const isManager = can.manage(user);
+  const manageLogins = can.workerLoginManage(user);
 
   const filtered = useMemo(
     () =>
@@ -209,6 +212,9 @@ export function WorkforcePage() {
             { key: "phone", header: "Phone" },
             { key: "project_id", header: "Project", render: (row) => (row.project_id ? nameOf(row.project_id) : "Not assigned") },
             { key: "status", header: "Status", render: (row) => <StatusBadge status={row.status} /> },
+            ...(manageLogins
+              ? [{ key: "login_email", header: "Login", render: (row) => row.login_email || <span className="text-muted">None</span> }]
+              : []),
             {
               key: "actions",
               header: "Actions",
@@ -216,6 +222,9 @@ export function WorkforcePage() {
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={() => setDetails(row)} size="sm" variant="secondary">View</Button>
                   {isManager ? <Button onClick={() => setForm({ open: true, worker: row })} size="sm" variant="secondary">Edit</Button> : null}
+                  {manageLogins ? (
+                    <Button onClick={() => setLoginFor(row)} size="sm" variant="secondary">{row.login_email ? "Manage login" : "Create login"}</Button>
+                  ) : null}
                   {can.adminOnly(user) ? <Button onClick={() => remove(row)} size="sm" variant="danger">Delete</Button> : null}
                 </div>
               ),
@@ -228,6 +237,7 @@ export function WorkforcePage() {
         />
       ) : null}
       <WorkerFormModal onClose={() => setForm({ open: false, worker: null })} onSaved={() => { setForm({ open: false, worker: null }); reload(); }} open={form.open} projects={projects} worker={form.worker} />
+      <WorkerLoginModal key={getId(loginFor) || "none"} onClose={() => setLoginFor(null)} onSaved={() => { setLoginFor(null); reload(); }} worker={loginFor} />
       <Modal onClose={() => setDetails(null)} open={Boolean(details)} title={workerName(details)}>
         {details ? (
           <DetailList
@@ -246,6 +256,7 @@ export function WorkforcePage() {
               ["Project", details.project_id ? nameOf(details.project_id) : "Not assigned"],
               ["Attendance (30 days)", details.attendance_pct != null ? `${Number(details.attendance_pct).toFixed(0)}%` : null],
               ["Status", <StatusBadge key="s" status={details.status} />],
+              ...(manageLogins ? [["Login", details.login_email || "None"]] : []),
             ]}
           />
         ) : null}

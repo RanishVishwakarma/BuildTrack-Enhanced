@@ -8,8 +8,9 @@ module decides *which* projects. Sources, in order:
    assignment created by an admin/PM or seeded by the role migration.
 3. Client link: the project's client email fields equal the user's email
    (the rule the projects router already applied to clients).
-4. Worker link: a `workers` record with the user's email, allocated to the
-   project via `workforce_allocations` or `workers.project_id`.
+4. Worker link: the `workers` record saved on the user as `worker_id` (set
+   when a manager creates or links the login, never inferred from email),
+   allocated to the project via `workforce_allocations` or `workers.project_id`.
 
 Anything not matched is denied. Lookups 404 rather than 403 so record ids
 cannot be probed for existence.
@@ -52,27 +53,31 @@ async def accessible_project_ids(db, user: dict) -> set[str] | None:
             async for project in db.projects.find(query, {"_id": 1}):
                 ids.add(str(project["_id"]))
 
-        worker_ids = []
-        async for worker in db.workers.find({"email": _email_regex(email)}, {"_id": 1, "project_id": 1}):
-            worker_ids.append(str(worker["_id"]))
-            if worker.get("project_id"):
-                ids.add(str(worker["project_id"]))
-        if worker_ids:
-            async for allocation in db.workforce_allocations.find(
-                {"worker_id": {"$in": worker_ids}, "status": {"$nin": ["ended", "cancelled", "inactive"]}},
-                {"project_id": 1},
-            ):
-                if allocation.get("project_id"):
-                    ids.add(str(allocation["project_id"]))
+    worker = await _linked_worker(db, user, {"_id": 1, "project_id": 1})
+    if worker:
+        if worker.get("project_id"):
+            ids.add(str(worker["project_id"]))
+        async for allocation in db.workforce_allocations.find(
+            {"worker_id": str(worker["_id"]), "status": {"$nin": ["ended", "cancelled", "inactive"]}},
+            {"project_id": 1},
+        ):
+            if allocation.get("project_id"):
+                ids.add(str(allocation["project_id"]))
     return ids
 
 
+async def _linked_worker(db, user: dict, projection: dict | None = None) -> dict | None:
+    worker_id = str(user.get("worker_id") or "")
+    try:
+        return await db.workers.find_one({"_id": ObjectId(worker_id)}, projection) if worker_id else None
+    except (InvalidId, TypeError):
+        return None
+
+
 async def own_worker_ids(db, user: dict) -> set[str]:
-    """Ids of `workers` records linked to the user by email."""
-    email = str(user.get("email") or "").strip()
-    if not email:
-        return set()
-    return {str(worker["_id"]) async for worker in db.workers.find({"email": _email_regex(email)}, {"_id": 1})}
+    """The `workers` record a manager linked to this login (user.worker_id)."""
+    worker = await _linked_worker(db, user, {"_id": 1})
+    return {str(worker["_id"])} if worker else set()
 
 
 def project_scope_query(project_ids: set[str] | None, field: str = "_id") -> dict:

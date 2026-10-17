@@ -40,7 +40,7 @@ async def seed(db):
         user("pm_a", "projectmanager", "pma@buildtrack-tests.io"),
         user("pm_b", "projectmanager", "pmb@buildtrack-tests.io"),
         user("engineer_a", "siteengineer", "eng@buildtrack-tests.io"),
-        user("worker", "worker", "worker@buildtrack-tests.io"),
+        user("worker", "worker", "worker@buildtrack-tests.io", worker_id=str(IDS["worker_rec"])),
         user("contractor_a", "contractor", "con@buildtrack-tests.io"),
         user("client_a", "client", "clienta@buildtrack-tests.io"),
         user("client_b", "client", "clientb@buildtrack-tests.io"),

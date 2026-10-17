@@ -48,7 +48,8 @@ export function normalizeUser(user, workerId) {
     status: user?.status || "Active",
     avatarUrl: user?.avatar_url || user?.avatarUrl,
     vendorId: user?.vendor_id,
-    workerId,
+    // Saved by a manager on the account; the login response also carries it.
+    workerId: user?.worker_id || workerId || null,
     // Effective permissions computed by the backend. Used only to decide
     // which controls to show; the backend enforces every action itself.
     permissions: Array.isArray(user?.permissions) ? user.permissions : [],

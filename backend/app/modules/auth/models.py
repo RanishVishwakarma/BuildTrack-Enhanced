@@ -20,6 +20,10 @@ class UserBase(BaseModel):
         default=None,
         description="Linked Vendor record ID for vendor users"
     )
+    worker_id: Optional[str] = Field(
+        default=None,
+        description="Linked Worker record ID, set by a manager"
+    )
 
     class Config:
         populate_by_name = True
