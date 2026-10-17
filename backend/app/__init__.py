@@ -1,0 +1,1 @@
+"""BuildTrack FastAPI backend."""

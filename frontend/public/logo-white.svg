@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 64" role="img" aria-label="BuildTrack">
+  <g fill="none">
+    <path d="M16 8.5 L4.5 18 M16 8.5 L56 18" stroke="#ffffff" stroke-linecap="round" stroke-width="1.8"/>
+    <rect x="3" y="17.5" width="56" height="3" rx="0.6" fill="#ffffff"/>
+    <rect x="1.5" y="16.5" width="8" height="7" rx="1" fill="#ffffff"/>
+    <rect x="13.9" y="7.5" width="4.2" height="50" rx="0.8" fill="#ffffff"/>
+    <rect x="8" y="56" width="44" height="4" rx="1" fill="#ffffff"/>
+    <path d="M55.5 20.5 V26" stroke="#ffffff" stroke-width="1.4"/>
+    <rect x="53" y="26" width="5" height="3.6" rx="0.7" fill="#e6811b"/>
+    <path d="M55.5 29.6 v2.4 a2.4 2.4 0 1 1 -2.4 2.4" stroke="#e6811b" stroke-linecap="round" stroke-width="1.8"/>
+    <rect x="43" y="30" width="2.2" height="26" rx="0.6" fill="#ffffff" fill-opacity="0.45"/>
+    <path d="M22 27.1 L32 24.5 L42 27.1 V29.5 L32 26.9 L22 29.5 Z" fill="#ffffff"/>
+    <path d="M22 33.5 L32 30.9 L42 33.5 V35.9 L32 33.3 L22 35.9 Z" fill="#ffffff"/>
+    <path d="M22 39.9 L32 37.3 L42 39.9 V42.3 L32 39.7 L22 42.3 Z" fill="#e6811b"/>
+    <path d="M22 46.3 L32 43.7 L42 46.3 V48.7 L32 46.1 L22 48.7 Z" fill="#ffffff"/>
+    <path d="M22 52.7 L32 50.1 L42 52.7 V55.1 L32 52.5 L22 55.1 Z" fill="#ffffff"/>
+  </g>
+  <text x="74" y="44" font-family="Manrope, 'DM Sans', 'Segoe UI', Arial, sans-serif" font-size="34" font-weight="800" letter-spacing="-0.8" fill="#ffffff">Build<tspan fill="#e6811b">Track</tspan></text>
+</svg>

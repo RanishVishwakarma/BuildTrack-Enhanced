@@ -1,0 +1,31 @@
+# Secrets and local settings
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+coverage/
+
+# Uploaded files (private data, never commit)
+backend/uploads/
+backend/private_uploads/
+backend/test_uploads_tmp/
+
+# Editor / OS
+.vscode/
+.idea/
+.claude/
+*.log
+.DS_Store
+Thumbs.db
