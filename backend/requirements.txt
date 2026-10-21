@@ -18,3 +18,9 @@ openpyxl==3.1.5
 reportlab==4.4.2
 pillow==11.2.1
 anthropic==1.15.0
+
+# Agent mode (app/modules/agent): LangGraph agents on a local Ollama model, Chroma for RAG
+langgraph==1.2.16
+langchain-core==1.6.12
+langchain-ollama==1.1.0
+chromadb==1.5.9

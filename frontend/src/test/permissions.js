@@ -3,6 +3,7 @@
 // Regenerate if the backend defaults change.
 export const ROLE_PERMISSIONS = {
   "Administrator": [
+    "ai.agent.use",
     "ai.query",
     "ai.recommendation.approve",
     "ai.recommendation.review",
@@ -73,6 +74,7 @@ export const ROLE_PERMISSIONS = {
     "workforce.read.sensitive",
   ],
   "Project Manager": [
+    "ai.agent.use",
     "ai.query",
     "ai.recommendation.approve",
     "ai.recommendation.review",
@@ -130,6 +132,7 @@ export const ROLE_PERMISSIONS = {
     "workforce.read.sensitive",
   ],
   "Site Engineer": [
+    "ai.agent.use",
     "ai.query",
     "ai.recommendation.review",
     "documents.read.assigned",

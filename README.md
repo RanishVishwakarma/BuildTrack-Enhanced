@@ -73,6 +73,43 @@ The assistant has three answer modes, set with `AI_PROVIDER` in `backend/.env`:
 
 The Overview, risks, forecasts, budget checks and reports do not use AI and are always free.
 
+### Agent mode (multi-agent, local, free)
+
+**Site Assistant → Agent mode** runs a LangGraph multi-agent workflow on an open-source model (Gemma by default) served by Ollama on your computer. It never calls a paid API. Code: [`backend/app/modules/agent`](backend/app/modules/agent).
+
+```mermaid
+graph TD
+  Q[Question] --> S[Supervisor: routes as JSON + recalls memory]
+  S -->|parallel| P[Procurement agent]
+  S -->|parallel| C[Schedule agent]
+  S -->|parallel| F[Safety agent]
+  P --> W[Writer]
+  C --> W
+  F --> W
+  W --> V{Verifier: every figure in the records?}
+  V -->|no, retry once| W
+  V -->|yes| A[Answer + sources, saved to memory]
+```
+
+What each part does:
+
+- **Routing.** The supervisor asks the model which specialists to use, as JSON. If the reply is unusable, it falls back to keyword routing.
+- **Tool use (ReAct).** Each specialist loops: the model picks a tool as JSON, and the call is checked against the tool's schema and the user's permissions before it runs. Invalid calls go back to the model with the error, so it can correct itself.
+- **Grounding.** If a small model answers without calling any tool, the agent runs its default tool so the answer still comes from records.
+- **RAG and memory.** A Chroma vector store holds safety reports, suggestions, saved reports and project descriptions, plus each user's past verified answers as long-term memory. Searches are filtered by permission, project and owner. Anonymous safety reporters are never indexed.
+- **Reflection.** A deterministic verifier checks every number in the draft against the evidence. Unsupported figures go back to the writer once; if they remain, they are flagged.
+- **Safety.** Tools are read-only. The one write tool only proposes an action, which a person must approve in the Action Center.
+- **API.** `POST /api/v1/ai/agent/chat` streams each step as newline-delimited JSON, and the UI shows it as a live timeline.
+
+Setup:
+
+```bash
+ollama pull gemma2:2b            # the agents' model (AGENT_MODEL, defaults to OLLAMA_MODEL)
+ollama pull nomic-embed-text     # optional: meaning-based search; without it, local keyword vectors are used
+```
+
+Then open **Agent mode** and press **Rebuild search index** (it also builds automatically on first use). A larger model such as `gemma3:4b` makes better tool choices: set `AGENT_MODEL` and pull it.
+
 ## Tests
 
 ```bash

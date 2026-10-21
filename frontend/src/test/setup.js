@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 
 // Pages are lazily loaded; the first import in a file is transformed on demand,
 // which can take several seconds when test files run in parallel.
-configure({ asyncUtilTimeout: 15000 });
+configure({ asyncUtilTimeout: 30000 });
 
 // Recharts' ResponsiveContainer needs ResizeObserver, which jsdom lacks.
 if (!globalThis.ResizeObserver) {

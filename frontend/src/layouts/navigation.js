@@ -1,4 +1,5 @@
 import {
+  Network,
   Activity,
   BarChart3,
   Bell,
@@ -39,6 +40,7 @@ export const NAV_ITEMS = [
     icon: Sparkles,
     children: [
       { label: "Ask AI", to: "/ai/ask", icon: Sparkles },
+      { label: "Agent mode", to: "/ai/agent", icon: Network },
       { label: "Action Center", to: "/ai/actions", icon: ClipboardCheck },
       { label: "AI Reports", to: "/ai/reports", icon: FileText },
       { label: "Activity", to: "/ai/activity", icon: Activity },

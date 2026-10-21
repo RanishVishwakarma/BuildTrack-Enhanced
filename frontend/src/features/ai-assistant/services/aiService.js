@@ -1,4 +1,5 @@
-import api from "../../../services/api.js";
+import api, { API_BASE_URL } from "../../../services/api.js";
+import { getStoredToken } from "../../auth/services/session.js";
 
 // AI Site Assistant (backend app/modules/ai/router.py, prefix /ai) and the
 // Action Center (app/modules/actions/router.py, prefix /recommendations).
@@ -35,6 +36,46 @@ export async function getConversation(id) {
 
 export async function deleteConversation(id) {
   await api.delete(`/ai/conversations/${id}`);
+}
+
+// Agent mode (backend app/modules/agent/router.py, prefix /ai/agent).
+export async function getAgentStatus() {
+  const { data } = await api.get("/ai/agent/status");
+  return data;
+}
+
+export async function rebuildAgentIndex() {
+  const { data } = await api.post("/ai/agent/index");
+  return data;
+}
+
+// Streams the run: calls onEvent for every newline-delimited JSON event
+// ("step" while the agents work, then "final", "saved" or "error").
+// fetch is used because axios cannot read a response while it streams.
+export async function streamAgentChat(message, conversationId, onEvent, signal) {
+  const token = getStoredToken();
+  const response = await fetch(`${API_BASE_URL}/ai/agent/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ message, conversation_id: conversationId || undefined }),
+    signal,
+  });
+  if (!response.ok) {
+    if (response.status === 401 && token) window.dispatchEvent(new Event("buildtrack:session-expired"));
+    const body = await response.json().catch(() => ({}));
+    throw new Error(typeof body.detail === "string" ? body.detail : "Agent mode is not available.");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = done ? "" : lines.pop();
+    for (const line of lines) if (line.trim()) onEvent(JSON.parse(line));
+    if (done) break;
+  }
 }
 
 // Action Center

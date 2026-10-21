@@ -49,6 +49,7 @@ export const ROUTES = [
   // AI and operations intelligence: opened by permission (backend app/core/permissions.py).
   { path: "/ai", title: "Site Assistant", permissions: ["ai.query"] },
   { path: "/ai/ask", title: "Ask AI", parent: "/ai", permissions: ["ai.query"] },
+  { path: "/ai/agent", title: "Agent mode", parent: "/ai", permissions: ["ai.agent.use"] },
   { path: "/ai/actions", title: "Action Center", parent: "/ai", permissions: ["ai.recommendation.review"] },
   { path: "/ai/reports", title: "Reports", parent: "/ai", permissions: ["reports.generate", "reports.read.assigned"] },
   { path: "/ai/activity", title: "Activity", parent: "/ai", permissions: ["ai.query"] },

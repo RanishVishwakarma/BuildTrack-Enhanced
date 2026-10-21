@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.modules.access.router import router as access_router
 from app.modules.actions.router import router as actions_router
+from app.modules.agent.router import router as agent_router
 from app.modules.ai.router import router as ai_router
 from app.modules.evidence.router import router as evidence_router
 from app.modules.hub.safety import router as safety_router
@@ -62,6 +63,7 @@ api_router.include_router(reports_router, prefix="/reports", tags=["Reports"])
 api_router.include_router(documents_router, prefix="/documents", tags=["Documents"])
 
 # AI Site Assistant (Phase 2) and operations intelligence (Phases 4-5)
+api_router.include_router(agent_router, prefix="/ai/agent", tags=["AI Agent mode"])
 api_router.include_router(ai_router, prefix="/ai", tags=["AI Assistant"])
 api_router.include_router(intelligence_router, prefix="/intelligence", tags=["Intelligence"])
 api_router.include_router(actions_router, prefix="/recommendations", tags=["Action Center"])

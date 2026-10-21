@@ -9,3 +9,4 @@ pytest-cache-files-*/
 *.sqlite3
 *.db
 private_uploads/
+data/

@@ -71,6 +71,7 @@ PERMISSIONS: dict[str, str] = {
     "budget.forecast.read": "Read budget forecasts, variance and spend anomalies",
     # AI
     "ai.query": "Ask the AI Site Assistant",
+    "ai.agent.use": "Use Agent mode (multi-agent assistant on the local model)",
     "ai.report.generate": "Generate AI reports",
     "ai.recommendation.review": "Review AI recommendations",
     "ai.recommendation.approve": "Approve or reject AI recommendations",
@@ -115,6 +116,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     roles.ADMIN: set(PERMISSIONS) - EXPLICIT_ONLY,
     roles.PROJECT_MANAGER: _COMMON
     | {
+        "ai.agent.use",
         "projects.read.assigned",
         "projects.create",
         "projects.update.assigned",
@@ -166,6 +168,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     | _SITE_STAFF,
     roles.SITE_ENGINEER: _COMMON
     | {
+        "ai.agent.use",
         "projects.read.assigned",
         "tasks.read.assigned",
         "tasks.update.assigned",

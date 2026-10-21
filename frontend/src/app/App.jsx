@@ -80,6 +80,7 @@ const pages = [
   ["/analytics/procurement", <AnalyticsPage key="a-procurement" type="procurement" />],
   ["/ai", <AiAssistantPage key="ai-overview" tab="overview" />],
   ["/ai/ask", <AiAssistantPage key="ai-ask" tab="ask" />],
+  ["/ai/agent", <AiAssistantPage key="ai-agent" tab="agent" />],
   ["/ai/actions", <AiAssistantPage key="ai-actions" tab="actions" />],
   ["/ai/reports", <AiAssistantPage key="ai-reports" tab="reports" />],
   ["/ai/activity", <AiAssistantPage key="ai-activity" tab="activity" />],

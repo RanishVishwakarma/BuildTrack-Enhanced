@@ -5,6 +5,7 @@ import { hasPermission } from "../../../lib/roles.js";
 import { useAuth } from "../../auth/context/AuthContext.jsx";
 import { ActionCenterTab } from "../components/ActionCenterTab.jsx";
 import { ActivityTab } from "../components/ActivityTab.jsx";
+import { AgentTab } from "../components/AgentTab.jsx";
 import { AskAiTab } from "../components/AskAiTab.jsx";
 import { OverviewTab } from "../components/OverviewTab.jsx";
 import { ReportsTab } from "../components/ReportsTab.jsx";
@@ -19,6 +20,7 @@ export function AiAssistantPage({ tab = "overview" }) {
   const tabs = [
     { key: "overview", label: "Overview", to: "/ai", show: true },
     { key: "ask", label: "Ask AI", to: "/ai/ask", show: hasPermission(user, "ai.query") },
+    { key: "agent", label: "Agent mode", to: "/ai/agent", show: hasPermission(user, "ai.agent.use") },
     { key: "actions", label: "Action Center", to: "/ai/actions", show: hasPermission(user, "ai.recommendation.review") },
     { key: "reports", label: "Reports", to: "/ai/reports", show: hasPermission(user, "reports.generate", "reports.read.assigned") },
     { key: "activity", label: "Activity", to: "/ai/activity", show: true },
@@ -35,6 +37,7 @@ export function AiAssistantPage({ tab = "overview" }) {
       <TabNav active={active} label="Site Assistant sections" tabs={tabs} />
       {active === "overview" ? <OverviewTab /> : null}
       {active === "ask" ? <AskAiTab status={status.data} /> : null}
+      {active === "agent" ? <AgentTab /> : null}
       {active === "actions" ? <ActionCenterTab /> : null}
       {active === "reports" ? <ReportsTab status={status.data} /> : null}
       {active === "activity" ? <ActivityTab /> : null}

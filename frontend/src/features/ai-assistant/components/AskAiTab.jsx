@@ -9,7 +9,7 @@ import { getApiErrorMessage } from "../../../services/apiError.js";
 import { deleteConversation, getConversation, getConversations, getSuggestedQuestions, sendChat } from "../services/aiService.js";
 
 // Renders assistant text: paragraphs and "-" / "1." lists, no HTML.
-function AnswerText({ text }) {
+export function AnswerText({ text }) {
   const blocks = String(text || "").split(/\n{2,}/);
   return (
     <div className="space-y-2 text-sm leading-relaxed text-foreground">
