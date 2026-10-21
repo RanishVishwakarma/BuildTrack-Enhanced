@@ -42,7 +42,9 @@ export const deleteAllocation = (id) => send("delete", `${base}/allocations/${id
 
 // Attendance. The plain list ignores filters server-side, so worker/project
 // filters use their dedicated routes.
-export function getAttendance({ workerId, projectId, startDate, endDate } = {}) {
+export function getAttendance({ workerId, projectId, startDate, endDate, day } = {}) {
+  // Every record for one calendar day ("YYYY-MM-DD"), for the daily roster.
+  if (day) return get(`${base}/attendance`, { date: day });
   if (workerId) return get(`${base}/attendance/worker/${workerId}`, { start_date: startDate, end_date: endDate });
   if (projectId) return get(`${base}/attendance/project/${projectId}`);
   return get(`${base}/attendance`, { limit: 1000 });

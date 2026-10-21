@@ -32,7 +32,7 @@ export function MyTasksPage() {
     return (
       <>
         <PageHeader title="My Tasks" />
-        <ErrorState message="Your login is not linked to a worker profile, so tasks cannot be loaded. Ask an administrator to link it." />
+        <ErrorState message="Your login is not linked to a worker profile, so tasks cannot be loaded. Ask your project manager to link it on the Workers page." />
       </>
     );
   }

@@ -112,3 +112,29 @@ def test_unlinked_vendor_login_is_not_matched_by_name(env):
     response = client.get(f"{API}/procurement/vendor/purchase-orders", headers=auth(IDS["vendor_user"]))
     assert response.status_code == 403 and "not linked" in response.json()["detail"]
     assert anyio.run(db.users.find_one, {"_id": IDS["vendor_user"]}).get("vendor_id") is None
+
+
+def test_worker_schedule_shows_only_own_shifts(env):
+    client, db = env
+    morning, night = ObjectId(), ObjectId()
+
+    async def shifts():
+        now = datetime(2026, 10, 18)
+        await db.shifts.insert_many([
+            {"_id": morning, "name": "Morning", "start_time": "08:00", "end_time": "16:00", "status": "ACTIVE", "created_at": now, "updated_at": now},
+            {"_id": night, "name": "Night", "start_time": "20:00", "end_time": "04:00", "status": "ACTIVE", "created_at": now, "updated_at": now},
+        ])
+        await db.shift_assignments.insert_one({"worker_id": str(IDS["sunil"]), "shift_id": str(morning), "date": now, "status": "ACTIVE",
+                                               "created_at": now, "updated_at": now})
+
+    anyio.run(shifts)
+    client.post(f"{API}/workforce/workers/{IDS['sunil']}/login", json={"password": "sunil-2026"}, headers=auth(IDS["pm"]))
+    sunil = anyio.run(db.users.find_one, {"email": "sunil@wl-tests.io"})
+
+    listed = client.get(f"{API}/workforce/shifts", headers=auth(sunil["_id"]))
+    assert listed.status_code == 200 and [s["name"] for s in listed.json()] == ["Morning"]
+    mine = client.get(f"{API}/workforce/shift-assignments", params={"worker_id": str(IDS["sunil"])}, headers=auth(sunil["_id"]))
+    assert mine.status_code == 200 and len(mine.json()) == 1
+    # Not linked: nothing.
+    assert client.get(f"{API}/workforce/shifts", headers=auth(IDS["squatter"])).status_code == 403
+    assert len(client.get(f"{API}/workforce/shifts", headers=auth(IDS["pm"])).json()) == 2

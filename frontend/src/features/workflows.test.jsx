@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { callsTo, emptyBackend, on, resetApi } from "../test/mockApi.js";
@@ -121,6 +121,26 @@ describe("workforce", () => {
     await user.click(within(row).getByRole("button", { name: "Present" }));
     await waitFor(() => expect(callsTo("post", "/workforce/attendance")).toHaveLength(1));
     expect(callsTo("post", "/workforce/attendance")[0].body).toMatchObject({ worker_id: "w1", project_id: "p1", status: "present" });
+    // The calendar day is sent as-is, never shifted through UTC.
+    expect(callsTo("post", "/workforce/attendance")[0].body.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("shows a day's saved mark and updates it instead of adding another", async () => {
+    on("get", "/workforce/workers", [{ _id: "w1", first_name: "Ann", last_name: "A", status: "available", project_id: "p1" }]);
+    on("get", "/workforce/attendance", ({ params }) =>
+      params?.date === "2026-10-16" ? [{ _id: "a1", worker_id: "w1", date: "2026-10-16T00:00:00", status: "present", check_in_time: "2026-10-16T03:30:00Z" }] : [],
+    );
+    on("put", "/workforce/attendance/a1", ({ body }) => ({ _id: "a1", worker_id: "w1", date: "2026-10-16T00:00:00", ...body }));
+    const user = userEvent.setup();
+    renderApp("/attendance", USERS.manager);
+    fireEvent.change(await screen.findByLabelText("Attendance date"), { target: { value: "2026-10-16" } });
+
+    const row = await rowFor("Ann A");
+    await waitFor(() => expect(within(row).getByRole("button", { name: "Present" })).toHaveAttribute("aria-pressed", "true"));
+    await user.click(within(row).getByRole("button", { name: "Absent" }));
+    await waitFor(() => expect(callsTo("put", "/workforce/attendance/a1")).toHaveLength(1));
+    expect(callsTo("put", "/workforce/attendance/a1")[0].body).toEqual({ status: "absent" });
+    expect(callsTo("post", "/workforce/attendance")).toHaveLength(0);
   });
 
   it("requires choosing a project before allocations load", async () => {

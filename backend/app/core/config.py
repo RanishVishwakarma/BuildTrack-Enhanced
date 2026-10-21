@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     # --- Your company's GSTIN: decides CGST+SGST (same state as the vendor)
     # or IGST (different state) on purchase orders. Empty = split not worked out.
     company_gstin: str | None = Field(default=None, validation_alias="COMPANY_GSTIN")
+    # Calendar days on site (attendance) are counted in this zone.
+    app_timezone: str = Field(default="Asia/Kolkata", validation_alias="APP_TIMEZONE")
 
     # --- AI (Anthropic Claude). Unset key = AI features report "not configured".
     anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
@@ -67,6 +69,15 @@ class Settings(BaseSettings):
     ai_max_tool_rounds: int = Field(default=8, validation_alias="AI_MAX_TOOL_ROUNDS")
     ai_requests_per_hour: int = Field(default=60, validation_alias="AI_REQUESTS_PER_HOUR")
     ai_timeout_seconds: float = Field(default=90.0, validation_alias="AI_TIMEOUT_SECONDS")
+
+    # --- Agent mode (app/modules/agent): LangGraph agents on a local Ollama
+    # model. Free; never calls Claude. Blank AGENT_MODEL = OLLAMA_MODEL.
+    agent_model: str | None = Field(default=None, validation_alias="AGENT_MODEL")
+    # Ollama embedding model for search; falls back to local hashed vectors
+    # when it is not pulled ("ollama pull nomic-embed-text").
+    agent_embed_model: str = Field(default="nomic-embed-text", validation_alias="AGENT_EMBED_MODEL")
+    agent_store_dir: Path = Field(default=BASE_DIR / "data" / "agent_store", validation_alias="AGENT_STORE_DIR")
+    agent_max_steps: int = Field(default=3, validation_alias="AGENT_MAX_STEPS")
 
     # --- Background monitoring (Phase 3).
     monitoring_enabled: bool = Field(default=True, validation_alias="MONITORING_ENABLED")
@@ -102,7 +113,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    @field_validator("company_gstin", "anthropic_api_key", "anthropic_workspace_id", "twilio_account_sid", "twilio_auth_token", "twilio_from_number", "public_base_url", "smtp_host", mode="before")
+    @field_validator("company_gstin", "agent_model", "anthropic_api_key", "anthropic_workspace_id", "twilio_account_sid", "twilio_auth_token", "twilio_from_number", "public_base_url", "smtp_host", mode="before")
     @classmethod
     def blank_is_unset(cls, value):
         """Treat empty or whitespace-only secrets as not configured."""

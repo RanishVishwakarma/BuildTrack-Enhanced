@@ -145,6 +145,8 @@ export function ShiftSchedulingPage() {
   const [shiftForm, setShiftForm] = useState({ open: false, shift: null });
   const [assigning, setAssigning] = useState(false);
 
+  // A worker login a manager has not linked to a worker record yet.
+  const unlinked = isWorker && !user?.workerId;
   const data = useAsyncData(
     async () => {
       const [shifts, assignments] = await Promise.all([
@@ -156,6 +158,7 @@ export function ShiftSchedulingPage() {
       return { shifts: normalizeList(shifts).items, assignments: normalizeList(assignments).items };
     },
     [projectFilter, isWorker, user?.workerId],
+    { enabled: !unlinked },
   );
   const shifts = data.data?.shifts || [];
   const assignments = (data.data?.assignments || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -196,10 +199,10 @@ export function ShiftSchedulingPage() {
           </Select>
         </div>
       ) : null}
-      {isWorker && !user?.workerId ? <ErrorState message="Your login is not linked to a worker profile, so your schedule cannot be loaded." /> : null}
-      {data.loading ? <LoadingState label="Loading shifts..." /> : null}
-      {!data.loading && data.error ? <ErrorState message={getApiErrorMessage(data.error)} onRetry={data.reload} /> : null}
-      {!data.loading && !data.error ? (
+      {unlinked ? <ErrorState message="Your login is not linked to a worker profile, so your schedule cannot be loaded. Ask your project manager to link it on the Workers page." /> : null}
+      {!unlinked && data.loading ? <LoadingState label="Loading shifts..." /> : null}
+      {!unlinked && !data.loading && data.error ? <ErrorState message={getApiErrorMessage(data.error)} onRetry={data.reload} /> : null}
+      {!unlinked && !data.loading && !data.error ? (
         <div className="space-y-6">
           {!isWorker ? (
             <section className="card">

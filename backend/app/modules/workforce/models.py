@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.modules.workforce.attendance_dates import work_day
 
 
 # ============================================================
@@ -199,7 +201,12 @@ class AttendanceBase(BaseModel):
 
 
 class AttendanceCreate(AttendanceBase):
-    pass
+    # Send the calendar day ("2026-10-18"); a full timestamp is converted to
+    # the site's day (APP_TIMEZONE), never filed under the UTC date.
+    @field_validator("date")
+    @classmethod
+    def to_work_day(cls, value):
+        return work_day(value)
 
 
 class AttendanceUpdate(BaseModel):
@@ -216,6 +223,11 @@ class AttendanceUpdate(BaseModel):
     overtime_hours: Optional[float] = None
 
     remarks: Optional[str] = None
+
+    @field_validator("date")
+    @classmethod
+    def to_work_day(cls, value):
+        return work_day(value)
 
 
 class Attendance(AttendanceBase):

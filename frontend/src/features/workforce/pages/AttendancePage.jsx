@@ -24,7 +24,13 @@ import { useAuth } from "../../auth/context/AuthContext.jsx";
 import { ATTENDANCE_STATUSES } from "../constants.js";
 import { createAttendance, deleteAttendance, getAttendance, getLowAttendanceWorkers, notifyLowAttendance, updateAttendance } from "../services/workforceService.js";
 
-const dayKey = (value) => (value ? toDateInput(value) : "");
+// Attendance dates are calendar days ("2026-10-18T00:00:00"): read the day
+// from the text so no time zone can move it to the day before.
+const dayKey = (value) => {
+  if (!value) return "";
+  const text = String(value);
+  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : toDateInput(value);
+};
 const timeOf = (value) => (value ? new Date(value).toTimeString().slice(0, 5) : "");
 function combine(date, time) {
   if (!date || !time) return undefined;
@@ -89,11 +95,18 @@ function EditAttendanceModal({ record, onClose, onSaved }) {
   );
 }
 
-function DailyRoster({ records, workers, reload, canMark }) {
+function DailyRoster({ workers, canMark, onChange }) {
   const [date, setDate] = useState(toDateInput());
   const [query, setQuery] = useState("");
   const { run, pending } = useAction();
   const isFuture = date > toDateInput();
+  // Loads exactly the selected day, so older days are never cut off by paging.
+  const day = useAsyncData(() => getAttendance({ day: date }), [date], { initialData: [] });
+  const records = Array.isArray(day.data) ? day.data : normalizeList(day.data).items;
+  const reload = () => {
+    day.reload();
+    onChange?.();
+  };
 
   const rows = useMemo(() => {
     const byWorker = new Map(records.filter((record) => dayKey(record.date) === date).map((record) => [String(record.worker_id), record]));
@@ -106,7 +119,7 @@ function DailyRoster({ records, workers, reload, canMark }) {
     if (isFuture) return;
     const action = row.record
       ? () => updateAttendance(getId(row.record), { status })
-      : () => createAttendance({ worker_id: getId(row.worker), project_id: row.worker.project_id || undefined, date: new Date(`${date}T00:00:00`).toISOString(), status });
+      : () => createAttendance({ worker_id: getId(row.worker), project_id: row.worker.project_id || undefined, date, status });
     await run(`mark-${getId(row.worker)}`, action, { error: `Unable to mark ${workerName(row.worker)}.`, onSuccess: reload });
   }
 
@@ -116,7 +129,7 @@ function DailyRoster({ records, workers, reload, canMark }) {
     await run("all", async () => {
       for (const row of pendingRows) {
         if (row.record) await updateAttendance(getId(row.record), { status: "present" });
-        else await createAttendance({ worker_id: getId(row.worker), project_id: row.worker.project_id || undefined, date: new Date(`${date}T00:00:00`).toISOString(), status: "present" });
+        else await createAttendance({ worker_id: getId(row.worker), project_id: row.worker.project_id || undefined, date, status: "present" });
       }
     }, { success: "Attendance marked.", error: "Some attendance records could not be saved.", onSuccess: reload });
   }
@@ -139,6 +152,7 @@ function DailyRoster({ records, workers, reload, canMark }) {
         <StatCard label="Not marked" value={rows.length - marked.length} />
       </section>
       {isFuture ? <p className="mb-4 rounded-md bg-warning/10 p-3 text-sm text-warning">Attendance cannot be recorded for a future date.</p> : null}
+      {day.error ? <ErrorState message={getApiErrorMessage(day.error)} onRetry={day.reload} /> : null}
       <DataTable
         columns={[
           { key: "worker", header: "Worker", render: (row) => <span className="font-semibold">{workerName(row.worker)}</span> },
@@ -304,6 +318,7 @@ export function AttendancePage() {
   const workerLookup = useWorkerOptions({ enabled: !isWorker });
   const projectLookup = useProjectOptions();
   const [filters, setFilters] = useState({ worker: "", project: "", status: "", from: "", to: "" });
+  const unlinked = isWorker && !user?.workerId;
 
   // Workers only ever see their own records (GET /attendance/worker/{id}).
   const records = useAsyncData(
@@ -312,7 +327,7 @@ export function AttendancePage() {
       return getAttendance({ workerId: filters.worker || undefined, projectId: filters.project || undefined });
     },
     [isWorker, user?.workerId, filters.worker, filters.project],
-    { initialData: [] },
+    { initialData: [], enabled: !unlinked },
   );
   const list = Array.isArray(records.data) ? records.data : normalizeList(records.data).items;
 
@@ -333,15 +348,15 @@ export function AttendancePage() {
         onRefresh={records.reload}
       />
       <TabNav active={view} label="Attendance views" tabs={views} />
-      {isWorker && !user?.workerId ? (
-        <ErrorState message="Your login is not linked to a worker profile, so attendance cannot be loaded. Ask an administrator to link it." />
+      {unlinked ? (
+        <ErrorState message="Your login is not linked to a worker profile, so attendance cannot be loaded. Ask your project manager to link it on the Workers page." />
       ) : null}
       {view === "low" ? <LowAttendanceView projectLookup={projectLookup} /> : null}
-      {view !== "low" && records.loading ? <LoadingState label="Loading attendance..." /> : null}
-      {view !== "low" && !records.loading && records.error ? <ErrorState message={getApiErrorMessage(records.error)} onRetry={records.reload} /> : null}
-      {view !== "low" && !records.loading && !records.error ? (
+      {!unlinked && view !== "low" && records.loading ? <LoadingState label="Loading attendance..." /> : null}
+      {!unlinked && view !== "low" && !records.loading && records.error ? <ErrorState message={getApiErrorMessage(records.error)} onRetry={records.reload} /> : null}
+      {!unlinked && view !== "low" && !records.loading && !records.error ? (
         view === "roster" ? (
-          workerLookup.loading ? <LoadingState label="Loading workers..." /> : <DailyRoster canMark={isManager} records={list} reload={records.reload} workers={workerLookup.workers} />
+          workerLookup.loading ? <LoadingState label="Loading workers..." /> : <DailyRoster canMark={isManager} onChange={records.reload} workers={workerLookup.workers} />
         ) : (
           <RecordsView
             canDelete={can.adminOnly(user)}

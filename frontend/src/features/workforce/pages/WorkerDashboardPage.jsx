@@ -37,7 +37,7 @@ export function WorkerDashboardPage() {
     return (
       <>
         <PageHeader title="My Dashboard" />
-        <ErrorState message="Your login is not linked to a worker profile. Ask an administrator to link it." />
+        <ErrorState message="Your login is not linked to a worker profile. Ask your project manager to link it on the Workers page." />
       </>
     );
   }

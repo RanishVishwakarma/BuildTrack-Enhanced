@@ -8,6 +8,7 @@ from app.core.access import ensure_project_access, own_worker_ids
 from app.core.permissions import ensure_permission, has_permission
 from app.core.audit import record_audit
 from app.core.security import get_current_user, hash_password
+from app.modules.workforce.attendance_dates import as_utc, hours_between, work_day
 from app.modules.auth.db import create_user as create_auth_user, get_user_by_email
 from app.modules.auth.models import UserCreate
 from app.db.mongodb import get_database
@@ -351,6 +352,13 @@ def serialize_attendance_doc(doc: dict) -> dict:
         "remarks",
         doc.get("remarks"),
     )
+
+    # The day is a calendar day; the times are instants returned with a zone.
+    doc["date"] = work_day(doc["date"]) if isinstance(doc.get("date"), datetime) else doc.get("date")
+    doc["check_in_time"] = as_utc(doc.get("check_in_time"))
+    doc["check_out_time"] = as_utc(doc.get("check_out_time"))
+    if doc.get("hours_worked") is None:
+        doc["hours_worked"] = hours_between(doc.get("check_in_time"), doc.get("check_out_time"))
 
     return doc
 
@@ -1035,13 +1043,16 @@ async def record_attendance_endpoint(
             detail="Worker not found",
         )
 
-    result = await record_attendance(
-        db,
-        attendance.model_dump(),
-    )
+    # One record per worker per day: marking again updates that record.
+    data = attendance.model_dump()
+    existing = await db.attendance.find_one({"worker_id": attendance.worker_id, "date": data["date"]})
+    if existing:
+        result = await update_attendance(db, str(existing["_id"]), attendance.model_dump(exclude_unset=True, exclude={"worker_id"}) | {"date": data["date"]})
+    else:
+        result = await record_attendance(db, data)
 
     worker_name = f"{worker.get('first_name', '')} {worker.get('last_name', '')}".strip() or worker.get("name") or "Worker"
-    status_label = "Present" if str(result.get("status") or "").lower() == "present" else "Absent"
+    status_label = str(result.get("status") or "absent").replace("_", " ").title()
     is_present = status_label == "Present"
 
     await create_notification(
@@ -1069,15 +1080,20 @@ async def record_attendance_endpoint(
 async def list_attendance_endpoint(
     skip: int = 0,
     limit: int = 100,
+    date: Optional[datetime] = None,
     current_user=Depends(get_current_user),
     db=Depends(get_database),
 ):
     await guard_crew_read(db, current_user)
-    records = await list_attendance(
-        db,
-        skip,
-        limit,
-    )
+    if date:
+        # Every record for one day (the daily roster), not the latest page.
+        records = await db.attendance.find({"date": work_day(date)}).to_list(None)
+    else:
+        records = await list_attendance(
+            db,
+            skip,
+            limit,
+        )
 
     return [
         Attendance(
@@ -1275,7 +1291,7 @@ async def update_attendance_endpoint(
         f"{worker.get('first_name', '')} {worker.get('last_name', '')}".strip()
         if worker else "Worker"
     ) or "Worker"
-    status_label = "Present" if str(result.get("status") or "").lower() == "present" else "Absent"
+    status_label = str(result.get("status") or "absent").replace("_", " ").title()
     is_present = status_label == "Present"
 
     await create_notification(
@@ -1364,11 +1380,22 @@ async def list_shifts_endpoint(
     current_user=Depends(get_current_user),
     db=Depends(get_database),
 ):
-    await guard_crew_read(db, current_user, project_id)
-    shifts = await list_shifts(
-        db,
-        project_id,
-    )
+    if not has_permission(current_user, "workforce.read.assigned"):
+        # A worker sees only the shifts they are assigned to (My Schedule).
+        worker_ids = await own_worker_ids(db, current_user)
+        if not worker_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+        shift_ids = {
+            str(item.get("shift_id"))
+            async for item in db.shift_assignments.find({"worker_id": {"$in": list(worker_ids)}}, {"shift_id": 1})
+        }
+        shifts = [shift for shift in await list_shifts(db, project_id) if str(shift["_id"]) in shift_ids]
+    else:
+        await guard_crew_read(db, current_user, project_id)
+        shifts = await list_shifts(
+            db,
+            project_id,
+        )
 
     return [
         Shift(
