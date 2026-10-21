@@ -11,7 +11,7 @@ from app.core.audit import record_audit
 from app.core.config import settings
 from app.core.email import send_email
 from app.core.permissions import effective_permissions, ensure_permission
-from app.core.roles import CANONICAL_ROLES, SELF_REGISTER_ROLES
+from app.core.roles import APPROVAL_REQUIRED_ROLES, CANONICAL_ROLES, SELF_REGISTER_ROLES
 from app.core.roles import normalize_role as normalize_canonical_role
 from app.core.security import (
     create_access_token,
@@ -58,6 +58,7 @@ class RegisterRequest(UserCreate):
 class RegisterResponse(BaseModel):
     message: str
     user: User
+    pending_approval: bool = False
 
 
 class SocialLoginRequest(BaseModel):
@@ -313,7 +314,8 @@ async def register(
             detail="This role cannot be chosen at sign-up. Contact an administrator.",
         )
     request.role = canonical_role
-    request.status = "active"
+    pending = canonical_role in APPROVAL_REQUIRED_ROLES
+    request.status = "pending" if pending else "active"
 
     # --------------------------------------------------------
     # Create normal user
@@ -322,8 +324,9 @@ async def register(
     await notify_admin_of_new_user(db, user, request.role)
 
     return RegisterResponse(
-        message="User registered successfully",
+        message=("Account created. An administrator must approve it before you can sign in." if pending else "User registered successfully"),
         user=serialize_user(user),
+        pending_approval=pending,
     )
 
 
@@ -513,6 +516,11 @@ async def login(
     # --------------------------------------------------------
     user_status = normalize_role(user.get("status"))
 
+    if str(user.get("status") or "").strip().lower() == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is waiting for an administrator to approve it.",
+        )
     if user_status != "active" and user.get("status") is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

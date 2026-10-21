@@ -56,4 +56,16 @@ describe("sign up", () => {
     const body = callsTo("post", "/auth/register")[0].body;
     expect(body).toEqual({ full_name: "Asha Engineer", email: "asha@example.com", password: "Strong#Pass1", role: "worker" });
   });
+  it("does not sign in a staff account that is waiting for approval", async () => {
+    on("post", "/auth/register", { message: "Account created. An administrator must approve it before you can sign in.", pending_approval: true });
+    const user = userEvent.setup();
+    renderApp("/auth/register");
+    await fillForm(user);
+    await user.selectOptions(screen.getByLabelText("Role"), "Project Manager");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+    expect(await screen.findByText("Account created. An administrator must approve it before you can sign in.")).toBeInTheDocument();
+    expect(callsTo("post", "/auth/login")).toHaveLength(0);
+    expect(await screen.findByText(/welcome back/i)).toBeInTheDocument();
+    expect(localStorage.getItem("buildtrack_token")).toBeNull();
+  });
 });

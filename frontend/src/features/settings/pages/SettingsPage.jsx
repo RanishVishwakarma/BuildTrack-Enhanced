@@ -127,9 +127,12 @@ function UsersTab() {
   const isSelf = (item) => item.id === user?.id || item.email === user?.email;
 
   async function toggle(item) {
-    const next = String(item.status).toLowerCase() === "suspended" ? "active" : "suspended";
-    if (!confirmAction(`${next === "active" ? "Reactivate" : "Suspend"} ${item.email}?`)) return;
-    await run(`status-${item.id}`, () => setUserStatus(item.id, next), { success: `User ${next === "active" ? "reactivated" : "suspended"}.`, error: "Unable to change user status.", onSuccess: reload });
+    const current = String(item.status).toLowerCase();
+    const next = current === "suspended" || current === "pending" ? "active" : "suspended";
+    const verb = current === "pending" ? "Approve" : next === "active" ? "Reactivate" : "Suspend";
+    if (!confirmAction(`${verb} ${item.email}?`)) return;
+    const done = current === "pending" ? "approved" : next === "active" ? "reactivated" : "suspended";
+    await run(`status-${item.id}`, () => setUserStatus(item.id, next), { success: `User ${done}.`, error: "Unable to change user status.", onSuccess: reload });
   }
 
   async function remove(item) {
@@ -162,7 +165,7 @@ function UsersTab() {
               isSelf(row) ? <span className="text-sm text-muted">You</span> : (
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={() => setEditing(row)} size="sm" variant="secondary">Edit</Button>
-                  <Button onClick={() => toggle(row)} size="sm" variant="secondary">{String(row.status).toLowerCase() === "suspended" ? "Reactivate" : "Suspend"}</Button>
+                  <Button onClick={() => toggle(row)} size="sm" variant="secondary">{{ suspended: "Reactivate", pending: "Approve" }[String(row.status).toLowerCase()] || "Suspend"}</Button>
                   <Button onClick={() => remove(row)} size="sm" variant="danger">Remove</Button>
                 </div>
               ),

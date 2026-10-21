@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.core.access import ensure_project_access, own_worker_ids
+from app.core.access import accessible_project_ids, ensure_project_access, own_worker_ids
 from app.core.permissions import ensure_permission, has_permission
 from app.core.audit import record_audit
 from app.core.security import get_current_user, hash_password
@@ -535,10 +535,29 @@ async def worker_logins(db, worker_ids: list) -> dict:
     return {str(user["worker_id"]): user for user in users}
 
 
-async def worker_for_login(db, worker_id: str) -> dict:
+async def manageable_worker(db, current_user, worker_id: str) -> dict:
+    """The worker, if it is on one of the manager's projects (or not yet on
+    any project, so a new hire can be set up). Others look like they do not
+    exist, so a manager cannot take over another project's workers."""
     worker = await get_worker(db, worker_id)
     if not worker:
         raise HTTPException(status_code=404, detail="Worker not found")
+    allowed = await accessible_project_ids(db, current_user)
+    if allowed is None:
+        return worker
+    projects = {str(worker["project_id"])} if worker.get("project_id") else set()
+    async for allocation in db.workforce_allocations.find(
+        {"worker_id": str(worker["_id"]), "status": {"$nin": ["ended", "cancelled", "inactive", "ENDED", "CANCELLED", "INACTIVE"]}}, {"project_id": 1}
+    ):
+        if allocation.get("project_id"):
+            projects.add(str(allocation["project_id"]))
+    if projects and not projects & allowed:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    return worker
+
+
+async def worker_for_login(db, current_user, worker_id: str) -> dict:
+    worker = await manageable_worker(db, current_user, worker_id)
     if (await worker_logins(db, [worker_id])).get(str(worker_id)):
         raise HTTPException(status_code=409, detail="This worker already has a login")
     return worker
@@ -548,7 +567,7 @@ async def worker_for_login(db, worker_id: str) -> dict:
 async def create_worker_login(worker_id: str, payload: WorkerLoginCreate, current_user=Depends(get_current_user), db=Depends(get_database)):
     """Create a worker-role login for this worker record."""
     ensure_permission(current_user, "workforce.login.manage")
-    worker = await worker_for_login(db, worker_id)
+    worker = await worker_for_login(db, current_user, worker_id)
     email = (payload.email or worker.get("email") or "").strip()
     if not EMAIL_PATTERN.match(email):
         raise HTTPException(status_code=400, detail="Enter a valid email for the login")
@@ -570,7 +589,7 @@ async def create_worker_login(worker_id: str, payload: WorkerLoginCreate, curren
 async def link_worker_login(worker_id: str, payload: WorkerLoginLink, current_user=Depends(get_current_user), db=Depends(get_database)):
     """Attach an account the worker registered themselves."""
     ensure_permission(current_user, "workforce.login.manage")
-    await worker_for_login(db, worker_id)
+    await worker_for_login(db, current_user, worker_id)
     user = await get_user_by_email(db, payload.email)
     if not user:
         raise HTTPException(status_code=404, detail="No account with this email")
@@ -587,6 +606,7 @@ async def link_worker_login(worker_id: str, payload: WorkerLoginLink, current_us
 async def unlink_worker_login(worker_id: str, current_user=Depends(get_current_user), db=Depends(get_database)):
     """Detach the login from this worker. The account itself is kept."""
     ensure_permission(current_user, "workforce.login.manage")
+    await manageable_worker(db, current_user, worker_id)
     login = (await worker_logins(db, [worker_id])).get(str(worker_id))
     if not login:
         raise HTTPException(status_code=404, detail="This worker has no login")
@@ -598,6 +618,7 @@ async def unlink_worker_login(worker_id: str, current_user=Depends(get_current_u
 @router.put("/workers/{worker_id}/login/password")
 async def reset_worker_password(worker_id: str, payload: WorkerPasswordReset, current_user=Depends(get_current_user), db=Depends(get_database)):
     ensure_permission(current_user, "workforce.login.manage")
+    await manageable_worker(db, current_user, worker_id)
     login = (await worker_logins(db, [worker_id])).get(str(worker_id))
     if not login:
         raise HTTPException(status_code=404, detail="This worker has no login")

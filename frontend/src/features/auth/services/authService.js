@@ -76,13 +76,16 @@ export async function login(payload) {
   };
 }
 
+// Staff accounts start "pending" until an administrator approves them, so
+// they are not signed in; other roles are signed in straight away.
 export async function register(payload) {
-  await api.post(endpoints.auth.register, {
+  const { data } = await api.post(endpoints.auth.register, {
     full_name: payload.fullName,
     email: payload.email,
     password: payload.password,
     role: backendRoleMap[payload.role] || "worker",
   });
+  if (data?.pending_approval) return { pending: true, message: data.message };
   return login({ email: payload.email, password: payload.password });
 }
 

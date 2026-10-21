@@ -22,6 +22,10 @@ CANONICAL_ROLES = (ADMIN, PROJECT_MANAGER, SITE_ENGINEER, WORKER, VENDOR, CLIENT
 # Roles anyone may choose at public sign-up. Admin and vendor accounts are
 # created by an administrator only.
 SELF_REGISTER_ROLES = (PROJECT_MANAGER, SITE_ENGINEER, WORKER, CLIENT, CONTRACTOR)
+# Staff roles can create projects or manage people and orders, so a self-registered
+# account stays "pending" until an administrator approves it. Workers and clients
+# start active: they see nothing until a manager links or grants access.
+APPROVAL_REQUIRED_ROLES = (PROJECT_MANAGER, SITE_ENGINEER, CONTRACTOR)
 
 _ALIASES = {
     "admin": ADMIN,

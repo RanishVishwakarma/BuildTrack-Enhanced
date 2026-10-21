@@ -58,6 +58,7 @@ export function AuthProvider({ children }) {
 
   const signUp = useCallback(async (payload) => {
     const session = await authService.register(payload);
+    if (session.pending) return session;
     persistSession(session.token, session.user);
     setToken(session.token);
     setUser(session.user);

@@ -23,6 +23,11 @@ export function RegisterPage() {
   const onSubmit = form.handleSubmit(async (values) => {
     try {
       const session = await signUp(values);
+      if (session.pending) {
+        toast.success(session.message, { duration: 8000 });
+        navigate("/auth/login", { replace: true });
+        return;
+      }
       toast.success("Account created.");
       navigate(getHomeRoute(session.user), { replace: true });
     } catch (error) {
@@ -45,7 +50,10 @@ export function RegisterPage() {
           {form.formState.isSubmitting ? "Creating account..." : "Create account"}
         </Button>
       </form>
-      <p className="text-xs text-muted">Vendor accounts are created by an administrator from the Vendors page.</p>
+      <p className="text-xs text-muted">
+        Project manager, site engineer and contractor accounts need approval from an administrator before first sign-in.
+        Vendor accounts are created by an administrator from the Vendors page.
+      </p>
       <AuthSeparator label="ALREADY REGISTERED?" />
       <Button as={Link} className="w-full" size="lg" to="/auth/login" variant="secondary">
         Sign in
