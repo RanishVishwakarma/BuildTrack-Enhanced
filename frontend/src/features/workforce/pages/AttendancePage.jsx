@@ -314,7 +314,7 @@ export function AttendancePage() {
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const isWorker = hasAnyRole(user, [ROLE.WORKER]);
-  const isManager = can.manage(user);
+  const isManager = can.markAttendance(user);
   const workerLookup = useWorkerOptions({ enabled: !isWorker });
   const projectLookup = useProjectOptions();
   const [filters, setFilters] = useState({ worker: "", project: "", status: "", from: "", to: "" });

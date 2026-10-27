@@ -332,7 +332,9 @@ def test_permission_grants_and_project_membership(env):
     body = client.put(f"{API}/access/users/{IDS['engineer']}/permissions", json={"granted": ["procurement.payment.record"]}, headers=auth("admin")).json()
     assert "procurement.payment.record" in body["effective"]
     assert client.put(f"{API}/access/users/{IDS['engineer']}/permissions", json={"granted": []}, headers=auth("pm")).status_code == 403
-    assert client.post(f"{API}/access/projects/{IDS['project']}/members", json={"user_id": str(IDS["pm_other"])}, headers=auth("pm")).status_code == 200
+    # Hierarchy: a project manager adds the site team, never another manager.
+    assert client.post(f"{API}/access/projects/{IDS['project']}/members", json={"user_id": str(IDS["engineer"])}, headers=auth("pm")).status_code == 200
+    assert client.post(f"{API}/access/projects/{IDS['project']}/members", json={"user_id": str(IDS["pm_other"])}, headers=auth("pm")).status_code == 403
     assert client.post(f"{API}/access/projects/{IDS['other_project']}/members", json={"user_id": str(IDS["engineer"])}, headers=auth("pm")).status_code == 404
     logs = client.get(f"{API}/access/audit-logs", headers=auth("admin")).json()
     assert any(l["event_type"] == "user.permissions.changed" for l in logs)

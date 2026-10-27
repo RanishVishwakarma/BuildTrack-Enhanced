@@ -13,6 +13,7 @@ from reportlab.pdfgen import canvas
 from app.core.config import BASE_DIR
 from app.core.audit import record_audit
 from app.modules.procurement.gst import GSTError, config as gst_settings
+from app.modules.procurement.scope import enforce_record_scope, merge, scope_filter
 from app.modules.procurement.invoice_match import match_invoice, over_po_message
 from app.core.permissions import ensure_permission, has_permission
 from app.core.security import get_current_user, hash_password
@@ -78,7 +79,8 @@ from app.modules.procurement.models import (
     VendorUpdate,
 )
 
-router = APIRouter()
+# Every record id in a URL must belong to one of the user's projects.
+router = APIRouter(dependencies=[Depends(enforce_record_scope)])
 UPLOAD_DIR = BASE_DIR / "uploads" / "invoices"
 
 
@@ -279,7 +281,8 @@ def draw_total_row(pdf: canvas.Canvas, y: int, label: str, amount: str):
 @router.get("/dashboard", response_model=DashboardStats)
 async def dashboard(current_user=Depends(get_current_user), db=Depends(get_database)):
     await guard_procurement_read(db, current_user)
-    return serialize_doc(await dashboard_stats(db))
+    scopes = {c: await scope_filter(db, current_user, c) for c in ("material_requests", "purchase_orders", "deliveries", "payments", "invoices")}
+    return serialize_doc(await dashboard_stats(db, scopes))
 
 
 @router.post("/vendors", response_model=Vendor)
@@ -380,7 +383,7 @@ async def create_vendor_with_account(
 async def vendors(params=Depends(list_params), status_filter: str | None = None, current_user=Depends(get_current_user), db=Depends(get_database)):
     await guard_procurement_read(db, current_user)
     skip, limit, search, sort_by, sort_dir = params
-    filters = {"status": status_filter} if status_filter else None
+    filters = merge({"status": status_filter} if status_filter else None, await scope_filter(db, current_user, "vendors"))
     result = page(await list_docs(db, "vendors", skip, limit, search, ["vendor_name", "contact_person", "email", "phone"], filters, sort_by, sort_dir))
     if has_permission(current_user, "users.create", "procurement.vendor.login.manage"):
         logins = await vendor_logins(db, [item["_id"] for item in result["items"]])
@@ -439,7 +442,8 @@ async def reset_vendor_password(vendor_id: str, payload: VendorPasswordReset, cu
 async def active_vendors(params=Depends(list_params), current_user=Depends(get_current_user), db=Depends(get_database)):
     await guard_procurement_read(db, current_user)
     skip, limit, search, sort_by, sort_dir = params
-    return page(await list_docs(db, "vendors", skip, limit, search, ["vendor_name", "contact_person", "email", "phone"], {"status": "active"}, sort_by, sort_dir))
+    filters = merge({"status": "active"}, await scope_filter(db, current_user, "vendors"))
+    return page(await list_docs(db, "vendors", skip, limit, search, ["vendor_name", "contact_person", "email", "phone"], filters, sort_by, sort_dir))
 
 
 @router.get("/vendors/{vendor_id}", response_model=Vendor)
@@ -505,6 +509,8 @@ async def material_requests(params=Depends(list_params), status_filter: str | No
         filters["status"] = status_filter
     if priority:
         filters["priority"] = priority
+    if current_user.get("role") != "vendor":
+        filters = merge(filters, await scope_filter(db, current_user, "material_requests"))
     return page(await list_docs(db, "material_requests", skip, limit, search, ["request_id", "project", "material_name", "status"], filters or None, sort_by, sort_dir))
 
 
@@ -1104,16 +1110,6 @@ async def create_po(po: PurchaseOrderCreate, current_user=Depends(get_current_us
     return PurchaseOrder(**serialize_doc(doc))
 
 
-async def list_purchase_orders(db, skip: int = 0, limit: int = 10):
-    res = await list_docs(db, "purchase_orders", skip, limit)
-    return res["items"]
-
-
-async def list_invoices(db, skip: int = 0, limit: int = 10):
-    res = await list_docs(db, "invoices", skip, limit)
-    return res["items"]
-
-
 @router.get("/purchase-orders")
 async def purchase_orders(params=Depends(list_params), status_filter: str | None = None, current_user=Depends(get_current_user), db=Depends(get_database)):
     await guard_procurement_read(db, current_user, allow_vendor_list=True)
@@ -1126,6 +1122,8 @@ async def purchase_orders(params=Depends(list_params), status_filter: str | None
         filters["vendor_id"] = str(vendor_id)
     if status_filter:
         filters["status"] = status_filter
+    if current_user.get("role") != "vendor":
+        filters = merge(filters, await scope_filter(db, current_user, "purchase_orders"))
     return page(await list_docs(db, "purchase_orders", skip, limit, search, ["po_number", "project", "materials", "status"], filters or None, sort_by, sort_dir))
 
 
@@ -1133,13 +1131,8 @@ async def purchase_orders(params=Depends(list_params), status_filter: str | None
 async def invoices(params=Depends(list_params), status_filter: str | None = None, current_user=Depends(get_current_user), db=Depends(get_database)):
     await guard_procurement_read(db, current_user, financial=True)
     skip, limit, search, sort_by, sort_dir = params
-    if search or status_filter:
-        filters = {"status": status_filter} if status_filter else None
-        return page(await list_docs(db, "invoices", skip, limit, search, ["invoice_number", "status", "payment_status"], filters, sort_by, sort_dir))
-    res = await list_invoices(db, skip, limit)
-    if isinstance(res, list):
-        return [serialize_doc(item) for item in res]
-    return page(res)
+    filters = merge({"status": status_filter} if status_filter else None, await scope_filter(db, current_user, "invoices"))
+    return page(await list_docs(db, "invoices", skip, limit, search, ["invoice_number", "status", "payment_status"], filters, sort_by, sort_dir))
 
 
 @router.get("/purchase-orders/{po_id}", response_model=PurchaseOrder)
@@ -1312,7 +1305,7 @@ async def create_delivery(delivery: DeliveryCreate, current_user=Depends(get_cur
 async def deliveries(params=Depends(list_params), status_filter: str | None = None, current_user=Depends(get_current_user), db=Depends(get_database)):
     await guard_procurement_read(db, current_user)
     skip, limit, search, sort_by, sort_dir = params
-    filters = {"status": status_filter} if status_filter else None
+    filters = merge({"status": status_filter} if status_filter else None, await scope_filter(db, current_user, "deliveries"))
     result = await list_docs(db, "deliveries", skip, limit, search, ["material", "status", "quality_status"], filters, sort_by, sort_dir)
     
     # Pre-fetch vendors and POs map for instant name resolution
@@ -1637,7 +1630,7 @@ async def create_payment(payment: PaymentCreate, current_user=Depends(get_curren
 async def payments(params=Depends(list_params), status_filter: str | None = None, current_user=Depends(get_current_user), db=Depends(get_database)):
     await guard_procurement_read(db, current_user, financial=True)
     skip, limit, search, sort_by, sort_dir = params
-    filters = {"status": status_filter} if status_filter else None
+    filters = merge({"status": status_filter} if status_filter else None, await scope_filter(db, current_user, "payments"))
     return page(await list_docs(db, "payments", skip, limit, search, ["status", "remarks"], filters, sort_by, sort_dir))
 
 
@@ -1661,7 +1654,7 @@ async def export_collection(collection: str, current_user=Depends(get_current_us
     allowed = {"vendors", "material_requests", "purchase_orders", "deliveries", "inventory", "invoices", "payments"}
     if collection not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported export collection")
-    records = await db[collection].find().to_list(10000)
+    records = await db[collection].find(await scope_filter(db, current_user, collection) or {}).to_list(10000)
     output = io.StringIO()
     fields = sorted({key for record in records for key in record.keys()}) if records else ["message"]
     writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
@@ -1673,8 +1666,9 @@ async def export_collection(collection: str, current_user=Depends(get_current_us
 
 
 @router.get("/invoices/{invoice_id}/status")
-async def get_invoice_payment_status(invoice_id: str, db=Depends(get_database)):
-    """Check live payment status for an invoice."""
+async def get_invoice_payment_status(invoice_id: str, current_user=Depends(get_current_user), db=Depends(get_database)):
+    """Check live payment status for an invoice (signed-in users on its project)."""
+    await guard_procurement_read(db, current_user, "invoices", invoice_id)
     invoice = await get_doc(db, "invoices", invoice_id)
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")

@@ -44,6 +44,7 @@ async def seed(db):
     ])
     await db.user_project_access.insert_many([
         {"user_id": str(IDS["pm"]), "project_id": pid, "active": True},
+        {"user_id": str(IDS["client"]), "project_id": pid, "active": True},
         {"user_id": str(IDS["pm_other"]), "project_id": str(IDS["other_project"]), "active": True},
     ])
     await db.workers.insert_one({"_id": IDS["worker_rec"], "email": "worker@site-tests.io", "name": "Worker", "project_id": pid})

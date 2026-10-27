@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
-from app.core.access import ensure_project_access, own_worker_ids
+from app.core.access import accessible_project_ids, ensure_project_access, own_worker_ids
 from app.core.permissions import ensure_permission, has_permission
 from app.core.security import get_current_user
 from app.db.mongodb import get_database
@@ -90,7 +90,9 @@ async def get_project_summary_report_endpoint(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="project_id must be a valid 24-char Mongo ObjectId",
         )
-    return await get_project_report_summary(db, project_id)
+    rows = await get_project_report_summary(db, project_id)
+    allowed = await accessible_project_ids(db, current_user)
+    return rows if allowed is None else [row for row in rows if row["project_id"] in allowed]
 
 
 @router.get("/project/{project_id}", response_model=list[Report])

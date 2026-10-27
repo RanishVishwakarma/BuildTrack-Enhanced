@@ -175,6 +175,7 @@ export function ProjectDetailsPage() {
   const [addingDocument, setAddingDocument] = useState(false);
   const [taskForm, setTaskForm] = useState({ open: false, task: null });
   const isManager = can.manage(user);
+  const canAssignTasks = can.assignTasks(user);
   const workerLookup = useWorkerOptions();
 
   const project = useAsyncData(() => getProject(projectId), [projectId]);
@@ -278,7 +279,7 @@ export function ProjectDetailsPage() {
             <h2 className="mb-4 text-lg font-semibold">Project information</h2>
             <DetailList
               items={[
-                ["Manager", record.project_manager_id && record.project_manager_id !== "unassigned" ? record.project_manager_id : "Unassigned"],
+                ["Manager", record.project_manager_name || "Unassigned"],
                 ["Client", record.client],
                 ["Client email", record.client_email || record.clientEmail],
                 ["Location", record.location],
@@ -382,7 +383,7 @@ export function ProjectDetailsPage() {
         <section className="card">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">Tasks</h2>
-            {isManager ? <Button onClick={() => setTaskForm({ open: true, task: null })} size="sm"><Plus className="h-4 w-4" /> New task</Button> : null}
+            {canAssignTasks ? <Button onClick={() => setTaskForm({ open: true, task: null })} size="sm"><Plus className="h-4 w-4" /> New task</Button> : null}
           </div>
           {tasks.loading ? <LoadingState label="Loading tasks..." /> : null}
           {!tasks.loading && tasks.error ? <ErrorState message={getApiErrorMessage(tasks.error)} onRetry={tasks.reload} /> : null}
@@ -393,7 +394,7 @@ export function ProjectDetailsPage() {
                 { key: "assigned", header: "Assigned to", render: (row) => (row.assigned_worker_id ? workerLookup.nameOf(row.assigned_worker_id) : row.assigned_category ? formatStatus(row.assigned_category) : "Unassigned") },
                 { key: "due_date", header: "Due", render: (row) => formatDate(row.due_date) },
                 { key: "status", header: "Status", render: (row) => <StatusBadge status={row.status} /> },
-                ...(isManager
+                ...(canAssignTasks
                   ? [{
                       key: "actions",
                       header: "Actions",

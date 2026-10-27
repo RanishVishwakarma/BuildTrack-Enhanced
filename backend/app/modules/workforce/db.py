@@ -819,11 +819,15 @@ async def delete_payroll(
 async def get_workforce_summary(
     db: AsyncIOMotorDatabase,
     project_id: str = None,
+    worker_ids: set[str] | None = None,
 ):
+    """Counts for the dashboard; `worker_ids` limits them to visible workers."""
     worker_query = {}
 
     if project_id:
         worker_query["project_id"] = project_id
+    if worker_ids is not None:
+        worker_query["_id"] = {"$in": [ObjectId(w) for w in worker_ids if ObjectId.is_valid(w)]}
 
     total_workers = await db.workers.count_documents(
         worker_query

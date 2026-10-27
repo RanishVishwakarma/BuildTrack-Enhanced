@@ -1,9 +1,12 @@
+from bson import ObjectId
+import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from datetime import datetime
 
 from app.core.access import accessible_project_ids, ensure_project_access, grant_project_access, project_scope_query
 from app.core.audit import record_audit
 from app.core.permissions import ensure_permission, has_permission
+from app.core.roles import normalize_role
 from app.core.security import get_current_user
 from app.db.mongodb import get_database
 from app.modules.notifications.db import create_notification
@@ -22,6 +25,71 @@ from app.modules.projects.models import (
     ProjectCreate,
     ProjectUpdate,
 )
+
+CLIENT_ACCESS_REASON = "project client"
+
+
+MANAGER_ACCESS_REASON = "project manager"
+
+
+async def resolve_manager(db, value) -> dict | None:
+    """The project-manager account named by `value`: an account id, or (older
+    records) the manager's display name or email."""
+    value = str(value or "").strip()
+    if not value or value == "unassigned":
+        return None
+    user = await db.users.find_one({"_id": ObjectId(value)}) if ObjectId.is_valid(value) else None
+    if user is None:
+        exact = {"$regex": f"^{re.escape(value)}$", "$options": "i"}
+        user = await db.users.find_one({"$or": [{"full_name": exact}, {"name": exact}, {"email": exact}]})
+    return user if user and normalize_role(user.get("role")) == "projectmanager" else None
+
+
+async def assign_manager(db, actor: dict, project_id: str, value, previous=None) -> str:
+    """Hierarchy: an admin assigns projects to project managers; a project
+    manager can only manage a project themselves. The assigned manager gets
+    access to the project, and a replaced manager loses that access.
+    Returns the value to store (the account id, or "unassigned")."""
+    manager = await resolve_manager(db, value)
+    if value not in (None, "", "unassigned") and manager is None:
+        raise HTTPException(status_code=422, detail="Choose a project manager account")
+    is_admin = normalize_role(actor.get("role")) == "admin"
+    if manager and not is_admin and str(manager["_id"]) != str(actor["_id"]):
+        raise HTTPException(status_code=403, detail="Only an administrator can assign a project to another project manager")
+    old = await resolve_manager(db, previous)
+    if old and (not manager or old["_id"] != manager["_id"]):
+        if not is_admin and str(old["_id"]) != str(actor["_id"]):
+            raise HTTPException(status_code=403, detail="Only an administrator can change another manager's project")
+        await db.user_project_access.update_many(
+            {"user_id": str(old["_id"]), "project_id": str(project_id), "reason": MANAGER_ACCESS_REASON},
+            {"$set": {"active": False, "updated_at": datetime.utcnow()}},
+        )
+    if manager:
+        await grant_project_access(db, user_id=str(manager["_id"]), project_id=str(project_id), granted_by=actor, reason=MANAGER_ACCESS_REASON)
+        return str(manager["_id"])
+    return "unassigned"
+
+
+async def with_manager_names(db, projects: list[dict]) -> list[dict]:
+    ids = {str(p.get("project_manager_id")) for p in projects if ObjectId.is_valid(str(p.get("project_manager_id") or ""))}
+    names = {str(u["_id"]): u.get("full_name") or u.get("name") or u.get("email")
+             async for u in db.users.find({"_id": {"$in": [ObjectId(i) for i in ids]}}, {"full_name": 1, "name": 1, "email": 1})}
+    out = []
+    for project in projects:
+        project = serialize_project(project)
+        value = str(project.get("project_manager_id") or "")
+        project["project_manager_name"] = names.get(value) or (None if ObjectId.is_valid(value) or value == "unassigned" else value or None)
+        out.append(project)
+    return out
+
+
+async def grant_client_access(db, client_user: dict | None, project_id: str, granted_by: dict) -> None:
+    """A manager naming a client on a project gives that client account access.
+    Only accounts with the client role qualify; access is never inferred from
+    an email match at read time."""
+    if client_user and str(client_user.get("role") or "").lower() == "client" and client_user.get("_id"):
+        await grant_project_access(db, user_id=str(client_user["_id"]), project_id=project_id, granted_by=granted_by, reason=CLIENT_ACCESS_REASON)
+
 
 router = APIRouter()
 
@@ -96,12 +164,13 @@ async def create_project_endpoint(
 
     project_data = project.model_dump()
     c_email = str(project_data.get("client_email") or project_data.get("clientEmail") or "").strip().lower()
+    client_account = None
     if c_email:
         project_data["client_email"] = c_email
         project_data["clientEmail"] = c_email
 
         # Auto-provision Client login if it doesn't exist yet
-        client_user = await db.users.find_one({"email": {"$regex": f"^{c_email}$", "$options": "i"}})
+        client_user = await db.users.find_one({"email": {"$regex": f"^{re.escape(c_email)}$", "$options": "i"}})
         if not client_user:
             client_name = project_data.get("client") or c_email.split("@")[0].capitalize()
             new_client = {
@@ -120,10 +189,26 @@ async def create_project_endpoint(
             # Notify admins of new client registration
             from app.modules.auth.router import notify_admin_of_new_user
             await notify_admin_of_new_user(db, new_client, "Client")
+            client_user = new_client
+        client_account = client_user
 
+    # A project manager who creates a project manages it unless an admin picks someone.
+    wanted = project_data.get("project_manager_id")
+    if wanted in (None, "", "unassigned") and normalize_role(current_user.get("role")) == "projectmanager":
+        wanted = str(current_user["_id"])
+    project_data["project_manager_id"] = "unassigned"
     result = await create_project(db, project_data)
     p_id = str(result["_id"])
     await grant_project_access(db, user_id=str(current_user["_id"]), project_id=p_id, granted_by=current_user, reason="creator")
+    try:
+        manager_value = await assign_manager(db, current_user, p_id, wanted)
+    except HTTPException:
+        await db.projects.delete_one({"_id": result["_id"]})
+        await db.user_project_access.delete_many({"project_id": p_id})
+        raise
+    await db.projects.update_one({"_id": result["_id"]}, {"$set": {"project_manager_id": manager_value}})
+    result["project_manager_id"] = manager_value
+    await grant_client_access(db, client_account, p_id, current_user)
     await record_audit(db, "project.created", actor=current_user, resource_type="project", resource_id=p_id, project_id=p_id)
 
     # Trigger project update notification
@@ -138,7 +223,7 @@ async def create_project_endpoint(
         "entity_id": p_id,
     })
 
-    return Project(**serialize_project(result))
+    return Project(**(await with_manager_names(db, [result]))[0])
 
 
 @router.get("/manager/{manager_id}", response_model=list[Project])
@@ -157,7 +242,7 @@ async def get_manager_projects(
         if ids is None or str(project["_id"]) in ids
     ]
 
-    return [Project(**serialize_project(project)) for project in projects]
+    return [Project(**p) for p in await with_manager_names(db, projects)]
 
 
 @router.get("", response_model=list[Project])
@@ -177,7 +262,7 @@ async def list_projects_endpoint(
         limit = max(1, min(limit, 500))
         projects = await db.projects.find(project_scope_query(ids)).skip(skip).limit(limit).to_list(limit)
 
-    return [Project(**serialize_project(project)) for project in projects]
+    return [Project(**p) for p in await with_manager_names(db, projects)]
 
 
 @router.get("/{project_id}", response_model=Project)
@@ -196,7 +281,7 @@ async def get_project_endpoint(
             detail="Project not found",
         )
 
-    return Project(**serialize_project(project))
+    return Project(**(await with_manager_names(db, [project]))[0])
 
 
 @router.put("/{project_id}", response_model=Project)
@@ -220,13 +305,16 @@ async def update_project_endpoint(
         )
 
     update_data = update.model_dump(exclude_unset=True)
+    if "project_manager_id" in update_data and update_data["project_manager_id"] != project.get("project_manager_id"):
+        update_data["project_manager_id"] = await assign_manager(db, current_user, project_id, update_data["project_manager_id"], project.get("project_manager_id"))
     c_email = str(update_data.get("client_email") or update_data.get("clientEmail") or "").strip().lower()
+    client_account = None
     if c_email:
         update_data["client_email"] = c_email
         update_data["clientEmail"] = c_email
 
         # Auto-provision Client login if it doesn't exist yet
-        client_user = await db.users.find_one({"email": {"$regex": f"^{c_email}$", "$options": "i"}})
+        client_user = await db.users.find_one({"email": {"$regex": f"^{re.escape(c_email)}$", "$options": "i"}})
         if not client_user:
             client_name = update_data.get("client") or project.get("client") or c_email.split("@")[0].capitalize()
             new_client = {
@@ -244,8 +332,21 @@ async def update_project_endpoint(
 
             from app.modules.auth.router import notify_admin_of_new_user
             await notify_admin_of_new_user(db, new_client, "Client")
+            client_user = new_client
+        client_account = client_user
 
     result = await update_project(db, project_id, update_data)
+    if c_email:
+        old_email = str(project.get("client_email") or project.get("clientEmail") or "").strip().lower()
+        if old_email and old_email != c_email:
+            # The previous client loses the access this project's email gave them.
+            previous = await db.users.find_one({"email": {"$regex": f"^{re.escape(old_email)}$", "$options": "i"}}, {"_id": 1})
+            if previous:
+                await db.user_project_access.update_many(
+                    {"user_id": str(previous["_id"]), "project_id": str(project_id), "reason": CLIENT_ACCESS_REASON},
+                    {"$set": {"active": False, "updated_at": datetime.utcnow()}},
+                )
+        await grant_client_access(db, client_account, str(project_id), current_user)
     p_name = result.get("name") or project.get("name") or "Project"
     target_user = result.get("project_manager_id") or str(current_user["_id"])
 
@@ -259,7 +360,7 @@ async def update_project_endpoint(
         "entity_id": project_id,
     })
 
-    return Project(**serialize_project(result))
+    return Project(**(await with_manager_names(db, [result]))[0])
 
 
 @router.delete("/{project_id}")

@@ -29,15 +29,17 @@ const projectSchema = z
   })
   .refine((values) => !values.end_date || values.end_date >= values.start_date, { message: "End date cannot be before the start date.", path: ["end_date"] });
 
-// Angular stored the selected manager's display name in project_manager_id;
-// the same convention is kept so existing records render consistently.
+// The project manager is stored as the account id, so the backend can give
+// that manager access. Older projects stored a display name; it is matched
+// back to the account here. Only admins are offered other managers.
 const managerLabel = (manager) => (manager.name && manager.name !== "string" ? manager.name : manager.email?.split("@")[0]);
 
 export function ProjectFormModal({ open, project, onClose, onSaved }) {
   const editing = Boolean(project);
   const { run, pending } = useAction();
   const managers = useAsyncData(getManagers, [], { initialData: [], enabled: open });
-  const currentManager = project?.project_manager_id && project.project_manager_id !== "unassigned" ? project.project_manager_id : "";
+  const stored = project?.project_manager_id && project.project_manager_id !== "unassigned" ? project.project_manager_id : "";
+  const currentManager = (managers.data || []).find((m) => m.id === stored || managerLabel(m) === stored)?.id || stored;
   const form = useForm({
     resolver: zodResolver(projectSchema),
     values: open
@@ -58,7 +60,7 @@ export function ProjectFormModal({ open, project, onClose, onSaved }) {
       : undefined,
   });
   const errors = form.formState.errors;
-  const managerOptions = (managers.data || []).map(managerLabel);
+  const managerOptions = (managers.data || []).map((m) => ({ id: m.id, label: managerLabel(m) }));
 
   const submit = form.handleSubmit(async (values) => {
     const payload = {
@@ -103,8 +105,8 @@ export function ProjectFormModal({ open, project, onClose, onSaved }) {
         </Select>
         <Select label="Project manager" {...form.register("project_manager_id")}>
           <option value="">Unassigned</option>
-          {currentManager && !managerOptions.includes(currentManager) ? <option value={currentManager}>{currentManager}</option> : null}
-          {managerOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+          {currentManager && !managerOptions.some((m) => m.id === currentManager) ? <option value={currentManager}>{project?.project_manager_name || currentManager}</option> : null}
+          {managerOptions.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
         </Select>
         <Input label="Location" {...form.register("location")} />
         <Input label="Start date" type="date" {...form.register("start_date")} error={errors.start_date?.message} />

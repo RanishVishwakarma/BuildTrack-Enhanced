@@ -492,8 +492,19 @@ async def create_payment_for_invoice(db: AsyncIOMotorDatabase, data: dict, user:
     return payment_doc, None
 
 
-async def dashboard_stats(db: AsyncIOMotorDatabase):
-    raw_activity = await db.procurement_activity.find().sort("created_at", -1).limit(4).to_list(4)
+async def dashboard_stats(db: AsyncIOMotorDatabase, scopes: dict | None = None):
+    """Counts and recent activity; `scopes` limits each collection to the
+    user's projects (None or a None value = everything)."""
+    scopes = scopes or {}
+
+    def where(collection: str, base: dict) -> dict:
+        scope = scopes.get(collection)
+        return {"$and": [base, scope]} if scope else base
+
+    raw_activity = await db.procurement_activity.find().sort("created_at", -1).limit(200 if any(scopes.values()) else 4).to_list(200)
+    if any(scopes.values()):
+        allowed = {c: {str(d["_id"]) async for d in db[c].find(s, {"_id": 1})} for c, s in scopes.items() if s}
+        raw_activity = [a for a in raw_activity if a.get("entity") not in allowed or str(a.get("entity_id")) in allowed[a.get("entity")]][:4]
     formatted_activity = []
     for a in raw_activity:
         action = a.get("action", "")
@@ -559,10 +570,10 @@ async def dashboard_stats(db: AsyncIOMotorDatabase):
         })
 
     return {
-        "pending_requests": await db.material_requests.count_documents({"status": "pending"}),
-        "active_purchase_orders": await db.purchase_orders.count_documents({"status": {"$in": ["created", "sent", "accepted"]}}),
-        "pending_deliveries": await db.deliveries.count_documents({"status": {"$in": ["pending", "partial"]}}),
-        "pending_payments": await db.payments.count_documents({"status": {"$in": ["pending", "approved"]}}),
+        "pending_requests": await db.material_requests.count_documents(where("material_requests", {"status": "pending"})),
+        "active_purchase_orders": await db.purchase_orders.count_documents(where("purchase_orders", {"status": {"$in": ["created", "sent", "accepted"]}})),
+        "pending_deliveries": await db.deliveries.count_documents(where("deliveries", {"status": {"$in": ["pending", "partial"]}})),
+        "pending_payments": await db.payments.count_documents(where("payments", {"status": {"$in": ["pending", "approved"]}})),
         "recent_activity": formatted_activity,
     }
 

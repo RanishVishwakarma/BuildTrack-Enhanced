@@ -64,6 +64,8 @@ class ProjectUpdate(BaseModel):
 
 class Project(ProjectBase):
     id: str = Field(alias="_id")
+    # Display name of the account in project_manager_id (filled by the API).
+    project_manager_name: Optional[str] = None
     milestones: list = Field(default=[])
     created_at: datetime
     updated_at: datetime

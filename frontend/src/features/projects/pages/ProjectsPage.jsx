@@ -21,7 +21,7 @@ import { getWorkerAllocations } from "../../workforce/services/workforceService.
 import { ProjectFormModal } from "../components/ProjectFormModal.jsx";
 import { PROJECT_STATUSES, deleteProject, getProjects, projectStatusLabel } from "../services/projectService.js";
 
-const managerOf = (project) => (project.project_manager_id && project.project_manager_id !== "unassigned" ? project.project_manager_id : "Unassigned");
+const managerOf = (project) => project.project_manager_name || "Unassigned";
 
 export function ProjectsPage() {
   const { user } = useAuth();

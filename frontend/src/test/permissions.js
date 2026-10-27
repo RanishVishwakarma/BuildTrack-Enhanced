@@ -3,6 +3,8 @@
 // Regenerate if the backend defaults change.
 export const ROLE_PERMISSIONS = {
   "Administrator": [
+    "workforce.attendance.manage",
+    "workforce.shifts.assign",
     "ai.agent.use",
     "ai.query",
     "ai.recommendation.approve",
@@ -74,6 +76,8 @@ export const ROLE_PERMISSIONS = {
     "workforce.read.sensitive",
   ],
   "Project Manager": [
+    "workforce.attendance.manage",
+    "workforce.shifts.assign",
     "ai.agent.use",
     "ai.query",
     "ai.recommendation.approve",
@@ -132,6 +136,9 @@ export const ROLE_PERMISSIONS = {
     "workforce.read.sensitive",
   ],
   "Site Engineer": [
+    "tasks.assign",
+    "workforce.attendance.manage",
+    "workforce.shifts.assign",
     "ai.agent.use",
     "ai.query",
     "ai.recommendation.review",

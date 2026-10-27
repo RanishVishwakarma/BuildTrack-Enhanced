@@ -10,7 +10,7 @@ from pydantic import BaseModel, EmailStr
 from app.core.audit import record_audit
 from app.core.config import settings
 from app.core.email import send_email
-from app.core.permissions import effective_permissions, ensure_permission
+from app.core.permissions import effective_permissions, ensure_permission, has_permission
 from app.core.roles import APPROVAL_REQUIRED_ROLES, CANONICAL_ROLES, SELF_REGISTER_ROLES
 from app.core.roles import normalize_role as normalize_canonical_role
 from app.core.security import (
@@ -864,6 +864,10 @@ async def list_managers_endpoint(
     Return all real registered users who have specifically signed up as Project Manager.
     """
     ensure_permission(current_user, "users.read", "projects.create")
+    # Hierarchy: only admins hand projects to other managers, so a project
+    # manager is only offered themselves.
+    if not has_permission(current_user, "users.read"):
+        return [serialize_user(current_user)]
     cursor = db.users.find({
         "role": {
             "$in": [

@@ -7,12 +7,13 @@ Three projects with milestones, tasks, workers, allocations, two weeks of
 attendance, shifts, vendors, material requests, purchase orders (GST),
 deliveries, invoices (one deliberately mismatched for the 3-way match),
 a payment, safety reports with a corrective action, improvement
-suggestions and saved reports. Existing project managers, site engineers,
-contractors and clients get access to the demo projects.
+suggestions and saved reports. Tower B is assigned to the first existing
+project manager (and its site engineers, contractors and clients); Metro
+Plaza and the Hospital Annex stay unassigned until an admin assigns them.
 
 Every record is tagged seed="demo-site", so --remove never touches data you
 entered yourself (or the inventory/resources demo, which has its own script).
-Emails use the reserved .local domain, so no real address is ever used.
+Emails use the reserved example.com domain, so no real address is ever used.
 """
 
 import argparse
@@ -102,17 +103,20 @@ async def seed(db) -> dict:
     pid = {}
     for key, p in projects.items():
         doc = tagged({"name": p["name"], "description": p["description"], "category": p["category"], "location": p["location"],
-                      "client": "Demo Client Pvt Ltd", "client_email": client.get("email", "client@demo.buildtrack.local") if key == "tower" else "client@demo.buildtrack.local",
-                      "project_manager_id": actor, "start_date": p["start"], "end_date": p["end"], "budget": p["budget"],
+                      "client": "Demo Client Pvt Ltd", "client_email": client.get("email", "client@example.com") if key == "tower" else "client@example.com",
+                      "project_manager_id": actor if key == "tower" and people.get("project_manager") else "unassigned", "start_date": p["start"], "end_date": p["end"], "budget": p["budget"],
                       "progress": p["progress"], "status": p["status"], "milestones": [], "created_at": p["start"] - timedelta(days=10)})
         doc["clientEmail"] = doc["client_email"]
         pid[key] = str((await db.projects.insert_one(doc)).inserted_id)
 
-    for role in ("project_manager", "site_engineer", "contractor", "client"):
-        for user in people.get(role, []):
-            for key in (["tower", "plaza", "annex"] if role == "project_manager" else ["tower", "plaza"] if role != "client" else ["tower"]):
-                await db.user_project_access.insert_one(tagged({"project_id": pid[key], "user_id": str(user["_id"]), "active": True,
-                                                                 "granted_by": str(admin.get("_id", "")), "reason": "Demo data"}))
+    # Only Tower B is handed out: the first project manager manages it and the
+    # site team works on it. Metro Plaza and the Hospital Annex stay unassigned
+    # until an admin gives them to a manager, so each manager sees only their own.
+    team = [(people.get("project_manager") or [])[:1], people.get("site_engineer", []), people.get("contractor", []), people.get("client", [])]
+    for reason, users in zip(("project manager", "Demo data", "Demo data", "project client"), team):
+        for user in users:
+            await db.user_project_access.insert_one(tagged({"project_id": pid["tower"], "user_id": str(user["_id"]), "active": True,
+                                                             "granted_by": str(admin.get("_id", "")), "reason": reason}))
 
     milestones = [
         ("tower", "Foundation and basement", -60, "Completed", 100), ("tower", "Superstructure up to floor 6", 25, "In Progress", 65),
@@ -139,7 +143,7 @@ async def seed(db) -> dict:
     ]
     wid, worker_project = {}, {}
     for i, (first, last, category, skill, designation, years, day_rate, key) in enumerate(workers, start=1):
-        doc = tagged({"worker_code": f"WRK-D{i:02d}", "first_name": first, "last_name": last, "email": f"{first.lower()}.{last.lower()}@demo.buildtrack.local",
+        doc = tagged({"worker_code": f"WRK-D{i:02d}", "first_name": first, "last_name": last, "email": f"{first.lower()}.{last.lower()}@example.com",
                       "phone": f"98450{i:05d}", "category": category, "skill_type": skill, "designation": designation, "experience_years": float(years),
                       "employment_type": "CONTRACT" if category == "UNSKILLED_WORKER" else "FULL_TIME", "joining_date": ago(30 * years + 40),
                       "salary_type": "DAILY", "hourly_rate": round(day_rate / 8, 2), "salary_amount": float(day_rate), "project_id": pid[key], "status": "assigned"})
@@ -214,7 +218,7 @@ async def seed(db) -> dict:
     vid = {}
     for key, (name, contact, gstin, materials, rating, address) in vendors.items():
         vid[key] = str((await db.vendors.insert_one(tagged({"vendor_name": name, "contact_person": contact, "phone": f"080-4100{len(vid):04d}",
-                                                            "email": f"sales.{key}@demo.buildtrack.local", "address": address, "gst_number": gstin,
+                                                            "email": f"sales.{key}@example.com", "address": address, "gst_number": gstin,
                                                             "pan_number": gstin[2:12], "materials_supplied": materials, "rating": rating, "status": "active"}))).inserted_id)
 
     async def request(key, material, unit, qty, status, required_in, priority, vendor=None, extra=None):

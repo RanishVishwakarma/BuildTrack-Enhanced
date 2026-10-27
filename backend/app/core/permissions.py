@@ -41,6 +41,8 @@ PERMISSIONS: dict[str, str] = {
     "workforce.read.assigned": "Read crew, allocations and attendance on assigned projects",
     "workforce.read.sensitive": "Read wages, salaries and payroll",
     "workforce.manage": "Manage workers, allocations, shifts, attendance and payroll",
+    "workforce.attendance.manage": "Mark and correct attendance for workers on assigned projects",
+    "workforce.shifts.assign": "Assign workers on assigned projects to shifts",
     "workforce.login.manage": "Create, link and reset worker logins",
     # Inventory and resources
     "inventory.read.assigned": "Read stock levels",
@@ -116,6 +118,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     roles.ADMIN: set(PERMISSIONS) - EXPLICIT_ONLY,
     roles.PROJECT_MANAGER: _COMMON
     | {
+        "workforce.attendance.manage",
+        "workforce.shifts.assign",
         "ai.agent.use",
         "projects.read.assigned",
         "projects.create",
@@ -168,6 +172,11 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     | _SITE_STAFF,
     roles.SITE_ENGINEER: _COMMON
     | {
+        # Hierarchy: site engineers manage workers on their projects (attendance,
+        # shifts, tasks), but not pay, allocations or worker logins.
+        "workforce.attendance.manage",
+        "workforce.shifts.assign",
+        "tasks.assign",
         "ai.agent.use",
         "projects.read.assigned",
         "tasks.read.assigned",

@@ -24,6 +24,19 @@ async def _user(db, user_id: str) -> dict:
     return user
 
 
+# Who may add or remove whom on a project: admins manage everyone; project
+# managers manage the site team below them (site engineers, contractors,
+# workers) and clients, never other managers or admins.
+MANAGED_BY_PROJECT_MANAGER = {"siteengineer", "contractor", "worker", "client"}
+
+
+def ensure_manages_role(actor: dict, target: dict) -> None:
+    if normalize_role(actor.get("role")) == "admin":
+        return
+    if normalize_role(target.get("role")) not in MANAGED_BY_PROJECT_MANAGER:
+        raise HTTPException(status_code=403, detail="Only an administrator can assign project managers and administrators to projects")
+
+
 @router.get("/permissions")
 async def registry(current_user=Depends(get_current_user)):
     ensure_permission(current_user, "users.roles.assign")
@@ -89,6 +102,7 @@ async def add_member(project_id: str, body: Member, current_user=Depends(get_cur
     user = await _user(db, body.user_id)
     if normalize_role(user.get("role")) == "vendor":
         raise HTTPException(status_code=422, detail="Vendors see purchase orders through their vendor record, not project membership")
+    ensure_manages_role(current_user, user)
     await grant_project_access(db, user_id=body.user_id, project_id=project_id, granted_by=current_user, reason="assigned")
     await record_audit(db, "project.member.added", actor=current_user, resource_type="user", resource_id=body.user_id, project_id=project_id)
     return {"message": "User assigned to project"}
@@ -100,6 +114,7 @@ async def remove_member(project_id: str, user_id: str, current_user=Depends(get_
     await ensure_project_access(db, current_user, project_id)
     if user_id == str(current_user["_id"]) and current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Ask an administrator to remove you from a project")
+    ensure_manages_role(current_user, await _user(db, user_id))
     result = await db.user_project_access.update_one({"user_id": user_id, "project_id": project_id}, {"$set": {"active": False, "updated_at": utcnow()}})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Membership not found")

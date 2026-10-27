@@ -61,6 +61,10 @@ export const can = {
   procurementVendorManage: (user) => hasPermission(user, "procurement.vendor.manage"),
   vendorLoginManage: (user) => hasPermission(user, "users.create", "procurement.vendor.login.manage"),
   workerLoginManage: (user) => hasPermission(user, "workforce.login.manage"),
+  // Hierarchy: project managers and site engineers run the site crew.
+  markAttendance: (user) => hasPermission(user, "workforce.manage", "workforce.attendance.manage"),
+  assignShifts: (user) => hasPermission(user, "workforce.manage", "workforce.shifts.assign"),
+  assignTasks: (user) => hasPermission(user, "tasks.assign"),
   procurementSiteEngineer: (user) => hasPermission(user, "procurement.request.create"),
   procurementStoreManager: (user) => hasPermission(user, "procurement.delivery.receive"),
   procurementInvoiceManage: (user) => hasPermission(user, "procurement.invoice.manage"),

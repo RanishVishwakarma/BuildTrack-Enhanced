@@ -2,9 +2,11 @@ import re
 from datetime import datetime
 from typing import Optional
 
+from bson import ObjectId
+from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.core.access import accessible_project_ids, ensure_project_access, own_worker_ids
+from app.core.access import accessible_project_ids, ensure_project_access, ensure_worker_visible, own_worker_ids, visible_worker_ids
 from app.core.permissions import ensure_permission, has_permission
 from app.core.audit import record_audit
 from app.core.security import get_current_user, hash_password
@@ -110,6 +112,15 @@ def is_manager_or_admin(current_user) -> bool:
     return has_permission(current_user, "workforce.manage")
 
 
+def can_manage_attendance(current_user) -> bool:
+    """Project managers and site engineers (hierarchy: they run the crew)."""
+    return has_permission(current_user, "workforce.manage", "workforce.attendance.manage")
+
+
+def can_assign_shifts(current_user) -> bool:
+    return has_permission(current_user, "workforce.manage", "workforce.shifts.assign")
+
+
 def is_admin(current_user) -> bool:
     return has_permission(current_user, "records.delete")
 
@@ -130,10 +141,28 @@ async def guard_crew_read(db, current_user, project_id=None) -> None:
         await ensure_project_access(db, current_user, project_id)
 
 
+async def ensure_record_worker_visible(db, current_user, collection: str, record_id: str) -> None:
+    """Same check for a record (attendance, payroll...) through its worker."""
+    try:
+        record = await db[collection].find_one({"_id": ObjectId(record_id)}, {"worker_id": 1})
+    except (InvalidId, TypeError):
+        return
+    if record:
+        await ensure_worker_visible(db, current_user, record.get("worker_id"))
+
+
+def only_visible(rows: list, visible: set[str] | None, key: str = "worker_id") -> list:
+    if visible is None:
+        return rows
+    return [row for row in rows if str(row.get(key) or "") in visible]
+
+
 async def guard_worker_read(db, current_user, worker_id=None, project_id=None) -> None:
     if has_permission(current_user, "workforce.read.assigned"):
         if project_id:
             await ensure_project_access(db, current_user, project_id)
+        if worker_id:
+            await ensure_worker_visible(db, current_user, worker_id)
         return
     if worker_id and str(worker_id) in await own_worker_ids(db, current_user):
         return
@@ -144,6 +173,8 @@ async def guard_pay_read(db, current_user, worker_id=None, project_id=None) -> N
     if has_permission(current_user, "workforce.read.sensitive"):
         if project_id:
             await ensure_project_access(db, current_user, project_id)
+        if worker_id:
+            await ensure_worker_visible(db, current_user, worker_id)
         return
     if worker_id and str(worker_id) in await own_worker_ids(db, current_user):
         return
@@ -515,6 +546,7 @@ async def list_workers_endpoint(
             if worker.get("status") == status_filter
         ]
 
+    workers = only_visible(workers, await visible_worker_ids(db, current_user), "_id")
     stats = await get_workers_attendance_stats(db, days=30)
     logins = await worker_logins(db, [worker["_id"] for worker in workers]) if has_permission(current_user, "workforce.login.manage") else {}
 
@@ -536,23 +568,11 @@ async def worker_logins(db, worker_ids: list) -> dict:
 
 
 async def manageable_worker(db, current_user, worker_id: str) -> dict:
-    """The worker, if it is on one of the manager's projects (or not yet on
-    any project, so a new hire can be set up). Others look like they do not
-    exist, so a manager cannot take over another project's workers."""
+    """The worker, if this manager may see it (see visible_worker_ids)."""
     worker = await get_worker(db, worker_id)
     if not worker:
         raise HTTPException(status_code=404, detail="Worker not found")
-    allowed = await accessible_project_ids(db, current_user)
-    if allowed is None:
-        return worker
-    projects = {str(worker["project_id"])} if worker.get("project_id") else set()
-    async for allocation in db.workforce_allocations.find(
-        {"worker_id": str(worker["_id"]), "status": {"$nin": ["ended", "cancelled", "inactive", "ENDED", "CANCELLED", "INACTIVE"]}}, {"project_id": 1}
-    ):
-        if allocation.get("project_id"):
-            projects.add(str(allocation["project_id"]))
-    if projects and not projects & allowed:
-        raise HTTPException(status_code=404, detail="Worker not found")
+    await ensure_worker_visible(db, current_user, worker_id)
     return worker
 
 
@@ -642,6 +662,7 @@ async def get_available_workers_endpoint(
     """
     await guard_crew_read(db, current_user)
     workers = await get_available_workers(db)
+    workers = only_visible(workers, await visible_worker_ids(db, current_user), "_id")
     stats = await get_workers_attendance_stats(db, days=30)
 
     return [
@@ -692,6 +713,7 @@ async def get_workers_by_category_endpoint(
         db,
         category,
     )
+    workers = only_visible(workers, await visible_worker_ids(db, current_user), "_id")
     stats = await get_workers_attendance_stats(db, days=30)
 
     return [
@@ -717,6 +739,7 @@ async def get_workers_by_skill_type(
         db,
         skill_type,
     )
+    workers = only_visible(workers, await visible_worker_ids(db, current_user), "_id")
     stats = await get_workers_attendance_stats(db, days=30)
 
     return [
@@ -768,6 +791,8 @@ async def update_worker_endpoint(
             status_code=403,
             detail="Only admin or manager can update workers",
         )
+
+    await ensure_worker_visible(db, current_user, worker_id)
 
     existing = await get_worker(
         db,
@@ -852,6 +877,8 @@ async def create_allocation_endpoint(
             detail="Only admin or manager can allocate workers",
         )
 
+    await ensure_worker_visible(db, current_user, allocation.worker_id)
+
     worker = await get_worker(
         db,
         allocation.worker_id,
@@ -902,6 +929,7 @@ async def get_allocation_endpoint(
     db=Depends(get_database),
 ):
     await guard_crew_read(db, current_user)
+    await ensure_record_worker_visible(db, current_user, "workforce_allocations", allocation_id)
     allocation = await get_workforce_allocation(
         db,
         allocation_id,
@@ -933,6 +961,8 @@ async def update_allocation_endpoint(
             status_code=403,
             detail="Only admin or manager can update allocations",
         )
+
+    await ensure_record_worker_visible(db, current_user, "workforce_allocations", allocation_id)
 
     existing = await get_workforce_allocation(
         db,
@@ -971,6 +1001,8 @@ async def delete_allocation_endpoint(
             status_code=403,
             detail="Only admin or manager can remove allocations",
         )
+
+    await ensure_record_worker_visible(db, current_user, "workforce_allocations", allocation_id)
 
     deleted = await delete_workforce_allocation(
         db,
@@ -1047,11 +1079,13 @@ async def record_attendance_endpoint(
     current_user=Depends(get_current_user),
     db=Depends(get_database),
 ):
-    if not is_manager_or_admin(current_user):
+    if not can_manage_attendance(current_user):
         raise HTTPException(
             status_code=403,
             detail="Only admin or manager can record attendance",
         )
+
+    await ensure_worker_visible(db, current_user, attendance.worker_id)
 
     worker = await get_worker(
         db,
@@ -1115,6 +1149,8 @@ async def list_attendance_endpoint(
             skip,
             limit,
         )
+
+    records = only_visible(records, await visible_worker_ids(db, current_user))
 
     return [
         Attendance(
@@ -1189,18 +1225,19 @@ async def get_low_attendance_workers_endpoint(
     days is below `threshold`. Manager/admin only.
     """
     await guard_crew_read(db, current_user, project_id)
-    if not is_manager_or_admin(current_user):
+    if not can_manage_attendance(current_user):
         raise HTTPException(
             status_code=403,
             detail="Only admin or manager can view low-attendance workers",
         )
 
-    return await get_low_attendance_workers(
+    rows = await get_low_attendance_workers(
         db,
         project_id,
         days,
         threshold,
     )
+    return only_visible(rows, await visible_worker_ids(db, current_user))
 
 
 @router.post(
@@ -1216,11 +1253,13 @@ async def notify_low_attendance_endpoint(
     Manually sends a low-attendance warning notification to the
     worker's linked user account (found via User.worker_id).
     """
-    if not is_manager_or_admin(current_user):
+    if not can_manage_attendance(current_user):
         raise HTTPException(
             status_code=403,
             detail="Only admin or manager can send attendance notifications",
         )
+
+    await ensure_worker_visible(db, current_user, worker_id)
 
     worker = await get_worker(
         db,
@@ -1282,11 +1321,13 @@ async def update_attendance_endpoint(
     current_user=Depends(get_current_user),
     db=Depends(get_database),
 ):
-    if not is_manager_or_admin(current_user):
+    if not can_manage_attendance(current_user):
         raise HTTPException(
             status_code=403,
             detail="Only admin or manager can update attendance",
         )
+
+    await ensure_record_worker_visible(db, current_user, "attendance", attendance_id)
 
     existing = await get_attendance(
         db,
@@ -1417,6 +1458,9 @@ async def list_shifts_endpoint(
             db,
             project_id,
         )
+        projects = await accessible_project_ids(db, current_user)
+        if projects is not None:  # site-wide shifts (no project) stay visible
+            shifts = [shift for shift in shifts if not shift.get("project_id") or str(shift["project_id"]) in projects]
 
     return [
         Shift(
@@ -1441,6 +1485,9 @@ async def get_shift_endpoint(
         shift_id,
     )
 
+    projects = await accessible_project_ids(db, current_user)
+    if shift and projects is not None and shift.get("project_id") and str(shift["project_id"]) not in projects:
+        shift = None
     if not shift:
         raise HTTPException(
             status_code=404,
@@ -1535,11 +1582,13 @@ async def assign_worker_shift_endpoint(
     current_user=Depends(get_current_user),
     db=Depends(get_database),
 ):
-    if not is_manager_or_admin(current_user):
+    if not can_assign_shifts(current_user):
         raise HTTPException(
             status_code=403,
             detail="Only admin or manager can assign shifts",
         )
+
+    await ensure_worker_visible(db, current_user, assignment.worker_id)
 
     worker = await get_worker(
         db,
@@ -1616,6 +1665,8 @@ async def list_shift_assignments_endpoint(
             length=None,
         )
 
+    assignments = only_visible(assignments, await visible_worker_ids(db, current_user))
+
     return [
         ShiftAssignment(
             **serialize_shift_assignment_doc(item)
@@ -1678,11 +1729,13 @@ async def delete_shift_assignment_endpoint(
     current_user=Depends(get_current_user),
     db=Depends(get_database),
 ):
-    if not is_manager_or_admin(current_user):
+    if not can_assign_shifts(current_user):
         raise HTTPException(
             status_code=403,
             detail="Only admin or manager can remove shift assignments",
         )
+
+    await ensure_record_worker_visible(db, current_user, "shift_assignments", assignment_id)
 
     deleted = await delete_shift_assignment(
         db,
@@ -1718,6 +1771,8 @@ async def create_payroll_endpoint(
             status_code=403,
             detail="Only admin or manager can create payroll",
         )
+
+    await ensure_worker_visible(db, current_user, payroll.worker_id)
 
     worker = await get_worker(
         db,
@@ -1783,6 +1838,8 @@ async def list_payroll_endpoint(
         worker_id,
     )
 
+    payroll_records = only_visible(payroll_records, await visible_worker_ids(db, current_user))
+
     return [
         Payroll(
             **serialize_payroll_doc(record)
@@ -1832,6 +1889,8 @@ async def update_payroll_endpoint(
             status_code=403,
             detail="Only admin or manager can update payroll",
         )
+
+    await ensure_record_worker_visible(db, current_user, "payroll", payroll_id)
 
     existing = await get_payroll(
         db,
@@ -1948,4 +2007,5 @@ async def workforce_dashboard_summary(
     return await get_workforce_summary(
         db,
         project_id,
+        await visible_worker_ids(db, current_user),
     )

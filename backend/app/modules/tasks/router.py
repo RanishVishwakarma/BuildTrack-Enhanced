@@ -2,7 +2,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.core.access import can_access_project, ensure_project_access, own_worker_ids
+from app.core.access import can_access_project, ensure_project_access, ensure_worker_visible, own_worker_ids
 from app.core.permissions import ensure_permission, has_permission
 from app.core.security import get_current_user
 from app.db.mongodb import get_database
@@ -74,6 +74,8 @@ async def create_task_endpoint(
     """Create a task on a project, optionally assigned to a worker."""
     ensure_permission(current_user, "tasks.assign")
     await ensure_project_access(db, current_user, task.project_id)
+    if task.assigned_worker_id:
+        await ensure_worker_visible(db, current_user, task.assigned_worker_id)
 
     task_data = task.model_dump()
     result = await create_task(db, task_data)
@@ -162,6 +164,8 @@ async def update_task_endpoint(
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
         if set(update_data) - {"status"}:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only update the status of your own task")
+    elif update_data.get("assigned_worker_id"):
+        await ensure_worker_visible(db, current_user, update_data["assigned_worker_id"])
     result = await update_task(db, task_id, update_data)
 
     # Notify only if the assignment actually changed to someone new.

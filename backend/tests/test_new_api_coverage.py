@@ -201,9 +201,11 @@ def test_procurements_and_vendors_top_level_aliases(monkeypatch):
 def test_procurement_purchase_order_and_invoice_lists(monkeypatch):
     from app.modules.procurement import router as procurement_router
 
-    # GET /purchase-orders pages through list_docs and returns {items, total}.
+    # Both lists page through list_docs and return {items, total}.
     async def fake_list_docs(_db, collection, *_args, **_kwargs):
-        assert collection == "purchase_orders"
+        assert collection in {"purchase_orders", "invoices"}
+        if collection == "invoices":
+            return {"total": 1, "items": await fake_list_invoices(_db, 0, 10)}
         return {"total": 1, "items": [
             {
                 "_id": "507f1f77bcf86cd799439016",
@@ -234,7 +236,6 @@ def test_procurement_purchase_order_and_invoice_lists(monkeypatch):
         ]
 
     monkeypatch.setattr(procurement_router, "list_docs", fake_list_docs)
-    monkeypatch.setattr(procurement_router, "list_invoices", fake_list_invoices)
 
     purchase_orders_response = client.get("/api/v1/procurement/purchase-orders")
     invoices_response = client.get("/api/v1/procurement/invoices")
@@ -243,4 +244,4 @@ def test_procurement_purchase_order_and_invoice_lists(monkeypatch):
     assert purchase_orders_response.json()["items"][0]["po_number"] == "PO-001"
 
     assert invoices_response.status_code == 200
-    assert invoices_response.json()[0]["invoice_number"] == "INV-001"
+    assert invoices_response.json()["items"][0]["invoice_number"] == "INV-001"

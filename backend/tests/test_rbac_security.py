@@ -55,6 +55,9 @@ async def seed(db):
     ])
     await db.user_project_access.insert_many([
         {"user_id": str(IDS["pm_a"]), "project_id": str(IDS["project_a"]), "active": True},
+        # Clients see a project only through an explicit grant (never by email match).
+        {"user_id": str(IDS["client_a"]), "project_id": str(IDS["project_a"]), "active": True},
+        {"user_id": str(IDS["client_b"]), "project_id": str(IDS["project_b"]), "active": True},
         {"user_id": str(IDS["pm_b"]), "project_id": str(IDS["project_b"]), "active": True},
         {"user_id": str(IDS["engineer_a"]), "project_id": str(IDS["project_a"]), "active": True},
         {"user_id": str(IDS["contractor_a"]), "project_id": str(IDS["project_a"]), "active": True},
@@ -275,7 +278,8 @@ def test_public_payment_confirmation_disabled(env):
 def test_quick_pay_requires_payment_permission(env):
     client, _ = env
     for key in ("vendor_1", "worker", "pm_a"):
-        assert client.post(f"{API}/procurement/invoices/{IDS['invoice_1']}/quick-pay", headers=auth(key)).status_code == 403, key
+        # 404 when the invoice is not on the user's projects at all, 403 when it is but paying is not allowed.
+        assert client.post(f"{API}/procurement/invoices/{IDS['invoice_1']}/quick-pay", headers=auth(key)).status_code in (403, 404), key
 
 
 def test_wages_hidden_without_sensitive_permission(env):

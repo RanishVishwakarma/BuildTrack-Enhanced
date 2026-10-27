@@ -138,6 +138,7 @@ export function ShiftSchedulingPage() {
   const { user } = useAuth();
   const isWorker = hasAnyRole(user, [ROLE.WORKER]);
   const isManager = can.manage(user);
+  const canAssign = can.assignShifts(user);
   const projectLookup = useProjectOptions();
   const workerLookup = useWorkerOptions({ enabled: !isWorker });
   const { run } = useAction();
@@ -186,7 +187,7 @@ export function ShiftSchedulingPage() {
         description={isWorker ? "Shifts you have been assigned to." : "Define site shifts and assign workers to them."}
         action={
           <div className="flex flex-wrap gap-2">
-            {isManager ? <Button onClick={() => setAssigning(true)} variant="secondary">Assign worker</Button> : null}
+            {canAssign ? <Button onClick={() => setAssigning(true)} variant="secondary">Assign worker</Button> : null}
             {isManager ? <Button onClick={() => setShiftForm({ open: true, shift: null })}><Plus className="h-4 w-4" /> New shift</Button> : null}
           </div>
         }
@@ -243,7 +244,7 @@ export function ShiftSchedulingPage() {
                 ...(!isWorker ? [{ key: "worker", header: "Worker", render: (row) => workerLookup.nameOf(row.worker_id) }] : []),
                 { key: "project", header: "Project", render: (row) => (row.project_id ? projectLookup.nameOf(row.project_id) : "Not set") },
                 { key: "status", header: "Status", render: (row) => <StatusBadge status={ALLOCATION_STATUSES.includes(row.status) ? row.status : row.status || "ACTIVE"} /> },
-                ...(isManager ? [{ key: "actions", header: "Actions", render: (row) => <Button onClick={() => removeAssignment(row)} size="sm" variant="danger">Remove</Button> }] : []),
+                ...(canAssign ? [{ key: "actions", header: "Actions", render: (row) => <Button onClick={() => removeAssignment(row)} size="sm" variant="danger">Remove</Button> }] : []),
               ]}
               emptyDescription={isWorker ? "You have no shifts assigned yet." : "Assign workers to shifts to build the schedule."}
               emptyTitle="No assignments"

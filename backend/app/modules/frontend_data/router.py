@@ -7,7 +7,7 @@ from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from app.core.access import accessible_project_ids, ensure_project_access, grant_project_access
+from app.core.access import accessible_project_ids, ensure_project_access, grant_project_access, visible_worker_ids
 from app.core.audit import record_audit
 from app.core.permissions import ensure_permission, has_permission
 from app.core.security import get_current_user
@@ -25,7 +25,9 @@ class Resource:
     """How one /frontend-data collection is authorized.
 
     scope: "project" - the record is a project; "project_field" - the record
-    carries project_id/projectId; None - not project-specific (company-wide).
+    carries project_id/projectId; "worker" - a worker record and "worker_field"
+    - a record carrying worker_id (both limited to the workers the user may
+    see); None - not project-specific (company-wide).
     """
 
     collection: str
@@ -42,10 +44,10 @@ RESOURCES: dict[str, Resource] = {
     "tasks": Resource("project_tasks", "tasks.read.assigned", "tasks.assign", "tasks.assign", scope="project_field"),
     "documents": Resource("project_documents", "documents.read.assigned", "documents.manage", None, scope="project_field"),
     "inventory": Resource("inventory", "inventory.read.assigned", "inventory.adjust.assigned", "inventory.adjust.assigned"),
-    "workers": Resource("workers", "workforce.read.assigned", "workforce.manage", "workforce.manage"),
+    "workers": Resource("workers", "workforce.read.assigned", "workforce.manage", "workforce.manage", scope="worker"),
     "resources": Resource("resources", "resources.read.assigned", "resources.manage", "resources.manage"),
     "procurement": Resource("procurements", "procurement.read.assigned", "procurement.request.review", "procurement.request.review"),
-    "attendance": Resource("attendance", "workforce.read.assigned", "workforce.manage", "workforce.manage"),
+    "attendance": Resource("attendance", "workforce.read.assigned", "workforce.manage", "workforce.manage", scope="worker_field"),
     "reports": Resource("reports", "reports.read.assigned", "reports.generate", None, delete=False),
 }
 
@@ -96,6 +98,13 @@ def redact(resource: Resource, user: dict, doc: dict) -> dict:
 
 
 async def scope_filter(db, resource: Resource, user: dict) -> dict:
+    if resource.scope in {"worker", "worker_field"}:
+        visible = await visible_worker_ids(db, user)
+        if visible is None:
+            return {}
+        if resource.scope == "worker":
+            return {"_id": {"$in": [ObjectId(w) for w in visible if ObjectId.is_valid(w)]}}
+        return {"worker_id": {"$in": sorted(visible)}}
     ids = await accessible_project_ids(db, user)
     if resource.scope is None or ids is None:
         return {}
