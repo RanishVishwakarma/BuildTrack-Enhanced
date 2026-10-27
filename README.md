@@ -59,6 +59,11 @@ There are seven roles: admin, project manager, site engineer, worker, vendor, cl
 **Access control**
 - Access is permission-based and enforced by the backend (`backend/app/core/permissions.py`).
 - Users see only the projects they are assigned to. Assign them in **Settings → Access**.
+- Clients get a project when a manager enters the client's email on it (or assigns them in **Settings → Access**). Signing up with a matching email alone grants nothing.
+- Project managers see and manage only the workers on their own projects, plus unassigned new hires. Admins see everyone.
+- Hierarchy: **admins** manage project managers. **Project managers** add site engineers, contractors, workers and clients to their own projects (never other managers). **Site engineers** run the crew on their projects: they mark attendance, assign shifts and create tasks, but never see pay or create logins.
+- Every list, dashboard and record (procurement included) is limited to the user's projects; another project's record answers 404.
+- Project manager, site engineer and contractor sign-ups wait for an admin to approve them in **Settings → Users**.
 - Extra duties, such as recording payments or receiving deliveries, are granted per user, not through extra roles.
 
 ## Site Assistant (AI)
@@ -116,6 +121,10 @@ Then open **Agent mode** and press **Rebuild search index** (it also builds auto
 cd backend && python -m pytest          # in-memory MongoDB, no network
 cd frontend && npm test && npm run lint
 ```
+
+## Deployment
+
+The API runs on Render and the website on Vercel. See [DEPLOY.md](DEPLOY.md) for the settings, environment variables and post-deploy steps.
 
 ## Configuration reference
 

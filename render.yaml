@@ -1,0 +1,39 @@
+# Render blueprint for the BuildTrack API (FastAPI). The website is on Vercel
+# (frontend/vercel.json). New deploys: Render -> New -> Blueprint -> this repo.
+# An existing service: copy these settings into it instead (see DEPLOY.md).
+# Values marked `sync: false` are secrets or URLs you enter in the dashboard.
+services:
+  - type: web
+    name: buildtrack-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.4
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: MONGODB_URL
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: buildtrack
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      # Your Vercel address, e.g. https://buildtrack.vercel.app (no trailing slash).
+      - key: BACKEND_CORS_ORIGINS
+        sync: false
+      # Free and safe on a server: no paid AI, no local model.
+      - key: AI_ENABLED
+        value: "false"
+      - key: AI_PROVIDER
+        value: quick
+      - key: APP_TIMEZONE
+        value: Asia/Kolkata
+      - key: COMPANY_GSTIN
+        sync: false
+
